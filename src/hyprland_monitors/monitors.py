@@ -1,5 +1,6 @@
 """Monitor state and pure helper functions for monitor management."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import NamedTuple, Self, TypedDict
 
@@ -87,9 +88,11 @@ class MonitorState:
             transform=m.transform,
             focused=m.focused,
             available_modes=tuple(m.available_modes),
+            # Extras are None when at their default — only non-default overrides
+            # get written to config lines by lines_from_monitors.
             bit_depth=str(m.bit_depth) if m.bit_depth != _DEFAULT_BIT_DEPTH else None,
             vrr=None,  # IPC returns bool; saved config is authoritative
-            color_management=m.color_management,
+            color_management=m.color_management if m.color_management != "default" else None,
             disabled=m.disabled,
         )
 
@@ -146,7 +149,7 @@ def compute_valid_scales(
     return scales
 
 
-def nearest_scale_index(scales: list[ScaleOption], target: float) -> int:
+def nearest_scale_index(scales: Sequence[ScaleOption], target: float) -> int:
     """Return the index of the scale closest to *target*.
 
     *scales* must be non-empty; raises ``ValueError`` otherwise.
@@ -167,7 +170,7 @@ def is_adjacent(a: MonitorState, b: MonitorState) -> bool:
     return h_touch or v_touch
 
 
-def all_monitors_connected(monitors: list[MonitorState]) -> bool:
+def all_monitors_connected(monitors: Sequence[MonitorState]) -> bool:
     """Check if all enabled monitors form a connected group.
 
     Returns True if there are 0 or 1 enabled monitors.
@@ -189,7 +192,7 @@ def all_monitors_connected(monitors: list[MonitorState]) -> bool:
 
 
 def adjust_neighbors(
-    monitors: list[MonitorState], mon: MonitorState, old_w: int, old_h: int
+    monitors: Sequence[MonitorState], mon: MonitorState, old_w: int, old_h: int
 ) -> None:
     """Shift monitors to maintain adjacency after a resize.
 
@@ -210,7 +213,7 @@ def adjust_neighbors(
             other.y += dh
 
 
-def lines_from_monitors(monitors: list[MonitorState]) -> list[str]:
+def lines_from_monitors(monitors: Sequence[MonitorState]) -> list[str]:
     """Build monitor config lines from Monitor objects."""
     lines = []
     for mon in monitors:
@@ -265,7 +268,7 @@ def parse_extras(line: str) -> dict[str, str]:
     return _parse_extras_from_parts(_split_config_line(line))
 
 
-def merge_saved_state(monitors: list[MonitorState], saved_lines: list[str]) -> None:
+def merge_saved_state(monitors: Sequence[MonitorState], saved_lines: list[str]) -> None:
     """Merge saved config state (extras and disabled flag) into Monitor objects.
 
     Saved config wins for values IPC can't distinguish

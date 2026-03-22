@@ -7,7 +7,7 @@ import ctypes
 import fcntl
 import functools
 import os
-from collections.abc import Generator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple, TypedDict
@@ -106,7 +106,7 @@ def _find_drm_connector(name: str) -> tuple[str, Path] | None:
 # ---------------------------------------------------------------------------
 
 
-def _read_edid_capabilities(edid_data: bytes) -> _EdidCaps:
+def _read_edid_capabilities(edid_data: bytes | bytearray) -> _EdidCaps:
     """Parse EDID bytes for 10-bit and HDR capabilities."""
     if len(edid_data) < 128:
         return _EdidCaps(ten_bit=False, hdr=False)
@@ -297,7 +297,7 @@ def _check_connector_vrr(fd: int, conn: _DrmModeGetConnector) -> bool:
 
 
 @contextmanager
-def _open_drm(card: str) -> Generator[int]:
+def _open_drm(card: str) -> Iterator[int]:
     """Open a DRM device node and ensure it is closed on exit."""
     fd = os.open(f"/dev/dri/{card}", os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
     try:
