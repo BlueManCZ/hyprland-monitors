@@ -92,7 +92,7 @@ class MonitorState:
             # get written to config lines by lines_from_monitors.
             bit_depth=str(m.bit_depth) if m.bit_depth != _DEFAULT_BIT_DEPTH else None,
             vrr=None,  # IPC returns bool; saved config is authoritative
-            color_management=m.color_management if m.color_management != "default" else None,
+            color_management=m.color_management,
             disabled=m.disabled,
         )
 

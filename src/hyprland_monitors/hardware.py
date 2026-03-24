@@ -14,6 +14,9 @@ from typing import NamedTuple, TypedDict
 
 _DRM_DIR = Path("/sys/class/drm")
 
+_EDID_BLOCK_SIZE = 128
+_EDID_NUM_EXTENSIONS_BYTE = 126
+
 
 class MonitorCapabilities(TypedDict):
     """Display capabilities read from EDID and DRM properties."""
@@ -108,7 +111,7 @@ def _find_drm_connector(name: str) -> tuple[str, Path] | None:
 
 def _read_edid_capabilities(edid_data: bytes | bytearray) -> _EdidCaps:
     """Parse EDID bytes for 10-bit and HDR capabilities."""
-    if len(edid_data) < 128:
+    if len(edid_data) < _EDID_BLOCK_SIZE:
         return _EdidCaps(ten_bit=False, hdr=False)
 
     # Bit depth from base EDID byte 20 (bits 6-4), requires EDID >= 1.4
@@ -120,12 +123,12 @@ def _read_edid_capabilities(edid_data: bytes | bytearray) -> _EdidCaps:
         ten_bit = depth_code >= 3
 
     # Search CEA-861 extension blocks for HDR Static Metadata (extended tag 6)
-    num_ext = edid_data[126]
+    num_ext = edid_data[_EDID_NUM_EXTENSIONS_BYTE]
     for ext_idx in range(num_ext):
-        offset = 128 * (ext_idx + 1)
-        if offset + 128 > len(edid_data):
+        offset = _EDID_BLOCK_SIZE * (ext_idx + 1)
+        if offset + _EDID_BLOCK_SIZE > len(edid_data):
             break
-        ext = edid_data[offset : offset + 128]
+        ext = edid_data[offset : offset + _EDID_BLOCK_SIZE]
         if ext[0] != 0x02:  # Not a CEA extension
             continue
         dtd_start = min(ext[2], len(ext))
@@ -223,14 +226,14 @@ _DRM_CONNECTED = 1  # drm_connector_status: connector has a display attached
 _DRM_CONNECTOR_TYPES: tuple[str, ...] = (
     "Unknown",
     "VGA",
-    "DVII",
-    "DVID",
-    "DVIA",
+    "DVI-I",
+    "DVI-D",
+    "DVI-A",
     "Composite",
     "SVIDEO",
     "LVDS",
     "Component",
-    "9PinDIN",
+    "DIN",
     "DP",
     "HDMI-A",
     "HDMI-B",
