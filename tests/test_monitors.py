@@ -14,6 +14,7 @@ from hyprland_monitors import (
     nearest_scale_index,
     parse_extras,
     parse_mode,
+    validate_mirror,
 )
 
 
@@ -490,3 +491,89 @@ class TestParseMode:
     def test_high_refresh(self):
         result = parse_mode("2560x1440@165.00Hz")
         assert result == {"width": 2560, "height": 1440, "refresh_rate": 165.0}
+
+
+class TestMirror:
+    def test_mirror_of_default_none(self):
+        mon = _make_monitor("DP-1", 1920, 1080, 0, 0)
+        assert mon.mirror_of is None
+
+    def test_lines_from_monitors_with_mirror(self):
+        mon = _make_monitor("DP-2", 1920, 1080, 0, 0)
+        mon.mirror_of = "DP-1"
+        lines = lines_from_monitors([mon])
+        assert lines == ["DP-2, 1920x1080@60.00Hz, 0x0, 1, mirror, DP-1"]
+
+    def test_lines_no_mirror_when_none(self):
+        mon = _make_monitor("DP-2", 1920, 1080, 0, 0)
+        lines = lines_from_monitors([mon])
+        assert "mirror" not in lines[0]
+
+    def test_disabled_monitor_no_mirror(self):
+        mon = _make_monitor("DP-2", 1920, 1080, 0, 0)
+        mon.mirror_of = "DP-1"
+        mon.disabled = True
+        lines = lines_from_monitors([mon])
+        assert lines == ["DP-2, disable"]
+
+    def test_parse_extras_mirror(self):
+        line = "DP-2, 1920x1080@60, 0x0, 1, mirror, DP-1"
+        assert parse_extras(line) == {"mirror_of": "DP-1"}
+
+    def test_parse_extras_mirror_with_other_extras(self):
+        line = "DP-2, 1920x1080@60, 0x0, 1, bitdepth, 10, mirror, DP-1"
+        extras = parse_extras(line)
+        assert extras == {"bit_depth": "10", "mirror_of": "DP-1"}
+
+    def test_merge_saved_state_mirror(self):
+        monitors = [_make_monitor("DP-2", 1920, 1080, 0, 0)]
+        saved = ["monitor = DP-2, 1920x1080@60, 0x0, 1, mirror, DP-1"]
+        merge_saved_state(monitors, saved)
+        assert monitors[0].mirror_of == "DP-1"
+
+    def test_all_monitors_connected_ignores_mirrored(self):
+        a = _make_monitor("A", 1920, 1080, 0, 0)
+        b = _make_monitor("B", 1920, 1080, 8000, 0)
+        b.mirror_of = "A"
+        assert all_monitors_connected([a, b]) is True
+
+    def test_adjust_neighbors_ignores_mirrored(self):
+        a = _make_monitor("A", 3440, 1440, 0, 0, scale=1.0)
+        b = _make_monitor("B", 1920, 1080, 3440, 0, scale=1.0)
+        c = _make_monitor("C", 1920, 1080, 0, 0)
+        c.mirror_of = "A"
+        _do_adjust([a, b, c], 0, {"scale": 2.0})
+        assert b.x == 1720
+        # Mirrored monitor's position is not shifted
+        assert c.x == 0
+
+
+class TestValidateMirror:
+    def test_none_target_valid(self):
+        a = _make_monitor("A", 1920, 1080, 0, 0)
+        assert validate_mirror([a], a, None) is None
+
+    def test_self_mirror_rejected(self):
+        a = _make_monitor("A", 1920, 1080, 0, 0)
+        assert validate_mirror([a], a, "A") is not None
+
+    def test_valid_target(self):
+        a = _make_monitor("A", 1920, 1080, 0, 0)
+        b = _make_monitor("B", 1920, 1080, 1920, 0)
+        assert validate_mirror([a, b], a, "B") is None
+
+    def test_nonexistent_target_rejected(self):
+        a = _make_monitor("A", 1920, 1080, 0, 0)
+        assert validate_mirror([a], a, "MISSING") is not None
+
+    def test_chain_rejected(self):
+        a = _make_monitor("A", 1920, 1080, 0, 0)
+        b = _make_monitor("B", 1920, 1080, 1920, 0)
+        b.mirror_of = "C"
+        assert validate_mirror([a, b], a, "B") is not None
+
+    def test_disabled_target_rejected(self):
+        a = _make_monitor("A", 1920, 1080, 0, 0)
+        b = _make_monitor("B", 1920, 1080, 1920, 0)
+        b.disabled = True
+        assert validate_mirror([a, b], a, "B") is not None

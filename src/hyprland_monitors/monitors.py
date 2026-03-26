@@ -70,6 +70,7 @@ class MonitorState:
     bit_depth: str | None = None
     vrr: str | None = None
     color_management: str | None = None
+    mirror_of: str | None = None
     disabled: bool = False
 
     @classmethod
@@ -93,6 +94,7 @@ class MonitorState:
             bit_depth=str(m.bit_depth) if m.bit_depth != _DEFAULT_BIT_DEPTH else None,
             vrr=None,  # IPC returns bool; saved config is authoritative
             color_management=m.color_management,
+            mirror_of=m.mirror_of if m.mirror_of != "none" else None,
             disabled=m.disabled,
         )
 
@@ -105,6 +107,7 @@ class MonitorState:
         self.refresh_rate = m.refresh_rate
         self.scale = m.scale
         self.transform = m.transform
+        self.mirror_of = m.mirror_of if m.mirror_of != "none" else None
 
     @property
     def effective_size(self) -> tuple[int, int]:
@@ -175,7 +178,7 @@ def all_monitors_connected(monitors: Sequence[MonitorState]) -> bool:
 
     Returns True if there are 0 or 1 enabled monitors.
     """
-    enabled = [m for m in monitors if not m.disabled]
+    enabled = [m for m in monitors if not m.disabled and not m.mirror_of]
     if len(enabled) <= 1:
         return True
 
@@ -205,12 +208,30 @@ def adjust_neighbors(
     if dw == 0 and dh == 0:
         return
     for other in monitors:
-        if other is mon:
+        if other is mon or other.mirror_of:
             continue
         if dw != 0 and other.x >= mon.x + old_w:
             other.x += dw
         if dh != 0 and other.y >= mon.y + old_h:
             other.y += dh
+
+
+def validate_mirror(
+    monitors: Sequence[MonitorState], mon: MonitorState, target: str | None
+) -> str | None:
+    """Return an error message if the mirror target is invalid, or None if valid."""
+    if target is None:
+        return None
+    if target == mon.name:
+        return "A monitor cannot mirror itself"
+    target_mon = next((m for m in monitors if m.name == target), None)
+    if target_mon is None:
+        return f"Mirror target '{target}' not found"
+    if target_mon.mirror_of is not None:
+        return f"Cannot mirror '{target}' — it is already mirroring '{target_mon.mirror_of}'"
+    if target_mon.disabled:
+        return f"Cannot mirror disabled monitor '{target}'"
+    return None
 
 
 def lines_from_monitors(monitors: Sequence[MonitorState]) -> list[str]:
@@ -230,6 +251,8 @@ def lines_from_monitors(monitors: Sequence[MonitorState]) -> list[str]:
             val = getattr(mon, field)
             if val is not None:
                 parts.extend([config_key, val])
+        if mon.mirror_of is not None:
+            parts.extend(["mirror", mon.mirror_of])
         lines.append(", ".join(parts))
     return lines
 
@@ -251,9 +274,12 @@ def _parse_extras_from_parts(parts: list[str]) -> dict[str, str]:
     i = 0
     while i + 1 < len(tail):
         key = tail[i].lower()
-        mapped = _CONFIG_TO_FIELD.get(key)
-        if mapped:
-            extras[mapped] = tail[i + 1]
+        if key == "mirror":
+            extras["mirror_of"] = tail[i + 1]
+        else:
+            mapped = _CONFIG_TO_FIELD.get(key)
+            if mapped:
+                extras[mapped] = tail[i + 1]
         # Unmapped keys (e.g. "transform") are ignored — handled natively.
         i += 2
     return extras
