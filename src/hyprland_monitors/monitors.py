@@ -72,6 +72,8 @@ class MonitorState:
     color_management: str | None = None
     mirror_of: str | None = None
     disabled: bool = False
+    description: str = ""
+    identify_by_description: bool = False
 
     @classmethod
     def from_ipc(cls, m: Monitor) -> Self:
@@ -96,6 +98,7 @@ class MonitorState:
             color_management=m.color_management,
             mirror_of=m.mirror_of if m.mirror_of != "none" else None,
             disabled=m.disabled,
+            description=m.description,
         )
 
     def update_geometry_from_ipc(self, m: Monitor) -> None:
@@ -234,17 +237,37 @@ def validate_mirror(
     return None
 
 
+def _identifier_for(mon: MonitorState) -> str:
+    """Return the leading token used in the monitor= config line.
+
+    When ``identify_by_description`` is set and a description is available,
+    emits ``desc:<description>``. Hyprland matches this as a prefix against
+    the monitor's IPC description, so the connector port can change without
+    breaking the rule. Falls back to the connector name otherwise.
+
+    The description is truncated at the first comma so the line remains
+    splittable on commas — Hyprland's prefix match still succeeds on the
+    truncated string.
+    """
+    if mon.identify_by_description and mon.description:
+        prefix = mon.description.split(",", 1)[0].strip()
+        if prefix:
+            return f"desc:{prefix}"
+    return mon.name
+
+
 def lines_from_monitors(monitors: Sequence[MonitorState]) -> list[str]:
     """Build monitor config lines from Monitor objects."""
     lines = []
     for mon in monitors:
+        ident = _identifier_for(mon)
         if mon.disabled:
-            lines.append(f"{mon.name}, disable")
+            lines.append(f"{ident}, disable")
             continue
         res = f"{mon.width}x{mon.height}@{mon.refresh_rate:.2f}Hz"
         pos = f"{mon.x}x{mon.y}"
         scale_str = _format_scale(mon.scale)
-        parts = [mon.name, res, pos, scale_str]
+        parts = [ident, res, pos, scale_str]
         if mon.transform:
             parts.extend(["transform", str(mon.transform)])
         for config_key, field in _CONFIG_TO_FIELD.items():
@@ -294,28 +317,50 @@ def parse_extras(line: str) -> dict[str, str]:
     return _parse_extras_from_parts(_split_config_line(line))
 
 
-def merge_saved_state(monitors: Sequence[MonitorState], saved_lines: list[str]) -> None:
-    """Merge saved config state (extras and disabled flag) into Monitor objects.
+def resolve_identifier(token: str, monitors: Sequence[MonitorState]) -> MonitorState | None:
+    """Resolve a config-line identifier to a connected monitor.
 
-    Saved config wins for values IPC can't distinguish
-    (e.g. vrr=2 vs vrr=1 both show as vrr:true in IPC).
-    Also restores disabled state from saved config.
+    The identifier is either a connector name (``DP-1``) or a description
+    prefix (``desc:Some Monitor``). Description matching follows Hyprland's
+    rule: prefix match against the monitor's description string. The first
+    matching monitor wins.
     """
-    saved_extras = {}
-    disabled_names: set[str] = set()
+    if token.startswith("desc:"):
+        prefix = token.removeprefix("desc:").strip()
+        if not prefix:
+            return None
+        for mon in monitors:
+            if mon.description.startswith(prefix):
+                return mon
+        return None
+    for mon in monitors:
+        if mon.name == token:
+            return mon
+    return None
+
+
+def merge_saved_state(monitors: Sequence[MonitorState], saved_lines: list[str]) -> None:
+    """Merge saved config state (extras, disabled flag, identifier mode) into monitors.
+
+    Saved config wins for values IPC can't distinguish (e.g. vrr=2 vs vrr=1
+    both show as vrr:true in IPC). Also restores ``disabled`` and sets
+    ``identify_by_description`` for monitors saved with a ``desc:`` token.
+    """
     for raw_line in saved_lines:
         parts = _split_config_line(raw_line)
+        if not parts or not parts[0]:
+            continue
+        token = parts[0]
+        mon = resolve_identifier(token, monitors)
+        if mon is None:
+            continue
+        if token.startswith("desc:"):
+            mon.identify_by_description = True
         if len(parts) >= 2 and parts[1].lower() == "disable":
-            disabled_names.add(parts[0])
+            mon.disabled = True
             continue
         if len(parts) >= 4:
-            saved_extras[parts[0]] = _parse_extras_from_parts(parts)
-    for mon in monitors:
-        if mon.name in disabled_names:
-            mon.disabled = True
-        extras = saved_extras.get(mon.name)
-        if extras:
-            for field, value in extras.items():
+            for field, value in _parse_extras_from_parts(parts).items():
                 setattr(mon, field, value)
 
 

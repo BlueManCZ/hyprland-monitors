@@ -14,6 +14,7 @@ from hyprland_monitors import (
     nearest_scale_index,
     parse_extras,
     parse_mode,
+    resolve_identifier,
     validate_mirror,
 )
 
@@ -577,3 +578,115 @@ class TestValidateMirror:
         b = _make_monitor("B", 1920, 1080, 1920, 0)
         b.disabled = True
         assert validate_mirror([a, b], a, "B") is not None
+
+
+def _make_described(name, description, w=1920, h=1080):
+    mon = _make_monitor(name, w, h, 0, 0)
+    mon.description = description
+    return mon
+
+
+class TestIdentifyByDescription:
+    """Emitting and parsing ``monitor=desc:...`` lines."""
+
+    def test_emits_port_name_by_default(self):
+        mon = _make_described("DP-1", "Acme Corp Acme Pixel 5000 SN12345")
+        assert lines_from_monitors([mon])[0].startswith("DP-1, ")
+
+    def test_emits_desc_when_toggled(self):
+        mon = _make_described("DP-1", "Acme Corp Acme Pixel 5000 SN12345")
+        mon.identify_by_description = True
+        line = lines_from_monitors([mon])[0]
+        assert line.startswith("desc:Acme Corp Acme Pixel 5000 SN12345, ")
+
+    def test_emits_desc_for_disabled(self):
+        mon = _make_described("DP-1", "Acme Pixel 5000")
+        mon.identify_by_description = True
+        mon.disabled = True
+        assert lines_from_monitors([mon]) == ["desc:Acme Pixel 5000, disable"]
+
+    def test_falls_back_to_port_when_description_empty(self):
+        mon = _make_described("DP-1", "")
+        mon.identify_by_description = True
+        assert lines_from_monitors([mon])[0].startswith("DP-1, ")
+
+    def test_truncates_description_at_first_comma(self):
+        # Hyprland config splits on commas, so the desc: token must not contain one.
+        mon = _make_described("DP-1", "Acme, Inc. Pixel 5000")
+        mon.identify_by_description = True
+        line = lines_from_monitors([mon])[0]
+        assert line.startswith("desc:Acme, ")
+        # The truncated identifier still leaves the line splittable into 4 parts
+        parts = [p.strip() for p in line.split(",")]
+        assert parts[0] == "desc:Acme"
+
+    def test_round_trip_preserves_flag(self):
+        mon = _make_described("DP-1", "Acme Pixel 5000")
+        mon.identify_by_description = True
+        line = "monitor = " + lines_from_monitors([mon])[0]
+        # Reset flag and re-merge — flag should be restored
+        mon.identify_by_description = False
+        merge_saved_state([mon], [line])
+        assert mon.identify_by_description is True
+
+    def test_full_round_trip_with_extras(self):
+        mon = _make_described("DP-2", "Acme Pixel 5000")
+        mon.identify_by_description = True
+        mon.bit_depth = "10"
+        mon.color_management = "srgb"
+        line = "monitor = " + lines_from_monitors([mon])[0]
+        # Fresh monitor, same description — merge should restore extras + flag
+        fresh = _make_described("DP-2", "Acme Pixel 5000")
+        merge_saved_state([fresh], [line])
+        assert fresh.identify_by_description is True
+        assert fresh.bit_depth == "10"
+        assert fresh.color_management == "srgb"
+
+    def test_merge_matches_when_port_changed(self):
+        # Saved with desc on DP-1, but the same monitor is now on HDMI-A-1.
+        saved = ["monitor = desc:Acme Pixel 5000, 1920x1080@60.00Hz, 0x0, 1, bitdepth, 10"]
+        mon = _make_described("HDMI-A-1", "Acme Pixel 5000")
+        merge_saved_state([mon], saved)
+        assert mon.identify_by_description is True
+        assert mon.bit_depth == "10"
+
+    def test_merge_disabled_via_desc(self):
+        mon = _make_described("HDMI-A-1", "Acme Pixel 5000")
+        merge_saved_state([mon], ["monitor = desc:Acme Pixel 5000, disable"])
+        assert mon.disabled is True
+        assert mon.identify_by_description is True
+
+
+class TestResolveIdentifier:
+    def test_port_name(self):
+        a = _make_described("DP-1", "Acme A")
+        b = _make_described("DP-2", "Acme B")
+        assert resolve_identifier("DP-2", [a, b]) is b
+
+    def test_desc_exact(self):
+        a = _make_described("DP-1", "Acme Pixel 5000")
+        assert resolve_identifier("desc:Acme Pixel 5000", [a]) is a
+
+    def test_desc_prefix(self):
+        # Hyprland matches descriptions as prefixes — truncated tokens still hit.
+        a = _make_described("DP-1", "Acme Pixel 5000 SN12345")
+        assert resolve_identifier("desc:Acme Pixel 5000", [a]) is a
+
+    def test_desc_first_match_wins(self):
+        a = _make_described("DP-1", "Acme Pixel 5000")
+        b = _make_described("DP-2", "Acme Pixel 5000")
+        # When two monitors share the same prefix, the first listed wins.
+        assert resolve_identifier("desc:Acme Pixel 5000", [a, b]) is a
+        assert resolve_identifier("desc:Acme Pixel 5000", [b, a]) is b
+
+    def test_desc_no_match(self):
+        a = _make_described("DP-1", "Acme A")
+        assert resolve_identifier("desc:Other Brand", [a]) is None
+
+    def test_empty_desc_no_match(self):
+        a = _make_described("DP-1", "Acme A")
+        assert resolve_identifier("desc:", [a]) is None
+
+    def test_unknown_port_no_match(self):
+        a = _make_described("DP-1", "Acme A")
+        assert resolve_identifier("DP-99", [a]) is None

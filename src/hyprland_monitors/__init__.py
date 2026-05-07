@@ -19,6 +19,7 @@ from hyprland_monitors.monitors import (
     nearest_scale_index,
     parse_extras,
     parse_mode,
+    resolve_identifier,
     validate_mirror,
 )
 
@@ -39,5 +40,6 @@ __all__ = [
     "nearest_scale_index",
     "parse_extras",
     "parse_mode",
+    "resolve_identifier",
     "validate_mirror",
 ]
