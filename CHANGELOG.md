@@ -5,6 +5,17 @@ All notable changes to hyprland-monitors will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-05-17
+
+### Added
+
+- **SDR brightness/saturation extras** — new `sdr_brightness` and `sdr_saturation` fields on `MonitorState`; populated from IPC and emitted to `monitor =` config lines as `sdrbrightness`/`sdrsaturation`
+- **`lines_from_monitors(explicit_hdr_defaults=...)`** — new keyword argument. When True, monitors with an HDR color-management preset emit explicit `sdrbrightness, 1` / `sdrsaturation, 1` even when the field is `None`, so callers applying lines live via `hl.monitor()` reset to defaults instead of inheriting the previous value
+
+### Changed
+
+- **`from_ipc` normalisation** — IPC's `"default"` color-management value (no preset active) now maps to `None`, matching the other config-line extras
+
 ## [0.5.0] - 2026-05-07
 
 ### Added
@@ -54,6 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Config parsing** — bidirectional conversion between MonitorState objects and Hyprland `monitor =` config lines, including extras (bitdepth, vrr, color_management)
 - **Hardware detection** — EDID parsing for HDR and 10-bit support, DRM kernel property queries for VRR capability
 
+[0.6.0]: https://github.com/BlueManCZ/hyprland-monitors/releases/tag/v0.6.0
 [0.5.0]: https://github.com/BlueManCZ/hyprland-monitors/releases/tag/v0.5.0
 [0.4.0]: https://github.com/BlueManCZ/hyprland-monitors/releases/tag/v0.4.0
 [0.3.0]: https://github.com/BlueManCZ/hyprland-monitors/releases/tag/v0.3.0

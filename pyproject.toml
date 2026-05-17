@@ -1,6 +1,6 @@
 [project]
 name = "hyprland-monitors"
-version = "0.5.0"
+version = "0.6.0"
 description = "Monitor management utilities for Hyprland"
 requires-python = ">=3.12"
 license = "MIT"
@@ -15,13 +15,13 @@ classifiers = [
     "Topic :: Desktop Environment",
     "Typing :: Typed",
 ]
-dependencies = ["hyprland-socket>=0.9.0"]
+dependencies = ["hyprland-socket>=0.12.1"]
 
 [project.urls]
 Repository = "https://github.com/BlueManCZ/hyprland-monitors"
 
 [dependency-groups]
-dev = ["pyright>=1.1", "pytest>=9.0", "ruff>=0.15"]
+dev = ["pyright>=1.1", "pytest>=9.0.3", "ruff>=0.15"]
 
 [build-system]
 requires = ["hatchling"]

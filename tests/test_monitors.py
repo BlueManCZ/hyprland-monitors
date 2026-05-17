@@ -1,6 +1,7 @@
 """Tests for monitor scaling and neighbor adjustment logic."""
 
 import pytest
+from hyprland_socket.models import Monitor
 
 from hyprland_monitors import (
     MonitorState,
@@ -392,8 +393,70 @@ class TestLinesFromMonitors:
         mon.bit_depth = "10"
         mon.vrr = "1"
         mon.color_management = "hdr"
+        mon.sdr_brightness = "1.2"
+        mon.sdr_saturation = "0.98"
         lines = lines_from_monitors([mon])
-        assert lines[0] == "DP-2, 3440x1440@165.00Hz, 0x0, 1, bitdepth, 10, vrr, 1, cm, hdr"
+        assert lines[0] == (
+            "DP-2, 3440x1440@165.00Hz, 0x0, 1, "
+            "bitdepth, 10, vrr, 1, cm, hdr, "
+            "sdrbrightness, 1.2, sdrsaturation, 0.98"
+        )
+
+    def test_with_sdr_brightness(self):
+        mon = _make_monitor("DP-1", 3440, 1440, 0, 0, scale=1.0)
+        mon.color_management = "hdr"
+        mon.sdr_brightness = "1.2"
+        lines = lines_from_monitors([mon])
+        assert "sdrbrightness, 1.2" in lines[0]
+
+    def test_with_sdr_saturation(self):
+        mon = _make_monitor("DP-1", 3440, 1440, 0, 0, scale=1.0)
+        mon.color_management = "hdr"
+        mon.sdr_saturation = "0.95"
+        lines = lines_from_monitors([mon])
+        assert "sdrsaturation, 0.95" in lines[0]
+
+    def test_explicit_hdr_defaults_emits_ones_for_none_in_hdr(self):
+        # Hyprland's hl.monitor() keeps the previous SDR value when keys are
+        # omitted; live-apply callers ask for explicit defaults so the apply
+        # actually resets the live state to 1.0.
+        mon = _make_monitor("DP-1", 3440, 1440, 0, 0, scale=1.0)
+        mon.color_management = "hdr"
+        lines = lines_from_monitors([mon], explicit_hdr_defaults=True)
+        assert "sdrbrightness, 1" in lines[0]
+        assert "sdrsaturation, 1" in lines[0]
+
+    def test_explicit_hdr_defaults_keeps_user_overrides_in_hdr(self):
+        mon = _make_monitor("DP-1", 3440, 1440, 0, 0, scale=1.0)
+        mon.color_management = "hdr"
+        mon.sdr_brightness = "1.5"
+        # sdr_saturation stays None — should still emit explicit "1"
+        lines = lines_from_monitors([mon], explicit_hdr_defaults=True)
+        assert "sdrbrightness, 1.5" in lines[0]
+        assert "sdrsaturation, 1" in lines[0]
+
+    def test_explicit_hdr_defaults_no_effect_outside_hdr(self):
+        # cm=srgb (not HDR) — flag must not add SDR keys.
+        mon = _make_monitor("DP-1", 3440, 1440, 0, 0, scale=1.0)
+        mon.color_management = "srgb"
+        lines = lines_from_monitors([mon], explicit_hdr_defaults=True)
+        assert "sdrbrightness" not in lines[0]
+        assert "sdrsaturation" not in lines[0]
+
+    def test_explicit_hdr_defaults_works_for_hdredid(self):
+        mon = _make_monitor("DP-1", 3440, 1440, 0, 0, scale=1.0)
+        mon.color_management = "hdredid"
+        lines = lines_from_monitors([mon], explicit_hdr_defaults=True)
+        assert "sdrbrightness, 1" in lines[0]
+        assert "sdrsaturation, 1" in lines[0]
+
+    def test_default_flag_off_keeps_clean_output(self):
+        # Saved-config callers shouldn't get extra noise.
+        mon = _make_monitor("DP-1", 3440, 1440, 0, 0, scale=1.0)
+        mon.color_management = "hdr"
+        lines = lines_from_monitors([mon])
+        assert "sdrbrightness" not in lines[0]
+        assert "sdrsaturation" not in lines[0]
 
     def test_no_extras_when_none(self):
         mon = _make_monitor("DP-1", 1920, 1080, 0, 0, scale=1.0)
@@ -433,6 +496,29 @@ class TestParseExtras:
         line = "DP-2, 3440x1440@165, 0x0, 1, transform, 0, bitdepth, 10, vrr, 1, cm, hdr"
         extras = parse_extras(line)
         assert extras == {"bit_depth": "10", "vrr": "1", "color_management": "hdr"}
+
+    def test_sdr_brightness(self):
+        line = "DP-2, 3440x1440@165, 0x0, 1, cm, hdr, sdrbrightness, 1.2"
+        extras = parse_extras(line)
+        assert extras == {"color_management": "hdr", "sdr_brightness": "1.2"}
+
+    def test_sdr_saturation(self):
+        line = "DP-2, 3440x1440@165, 0x0, 1, cm, hdr, sdrsaturation, 0.95"
+        extras = parse_extras(line)
+        assert extras == {"color_management": "hdr", "sdr_saturation": "0.95"}
+
+    def test_all_hdr_extras(self):
+        line = (
+            "DP-2, 3440x1440@165, 0x0, 1, "
+            "bitdepth, 10, cm, hdr, sdrbrightness, 1.2, sdrsaturation, 0.98"
+        )
+        extras = parse_extras(line)
+        assert extras == {
+            "bit_depth": "10",
+            "color_management": "hdr",
+            "sdr_brightness": "1.2",
+            "sdr_saturation": "0.98",
+        }
 
     def test_no_extras(self):
         line = "DP-1, 1920x1080@60, 0x0, 1"
@@ -478,6 +564,17 @@ class TestMergeSavedState:
         assert monitors[0].bit_depth == "10"
         assert monitors[0].color_management == "srgb"
         assert monitors[1].bit_depth is None
+
+    def test_merges_sdr_brightness_and_saturation(self):
+        monitors = [_make_monitor("DP-2", 3440, 1440, 0, 0)]
+        saved = [
+            "monitor = DP-2, 3440x1440@165, 0x0, 1, cm, hdr, "
+            "sdrbrightness, 1.2, sdrsaturation, 0.98"
+        ]
+        merge_saved_state(monitors, saved)
+        assert monitors[0].color_management == "hdr"
+        assert monitors[0].sdr_brightness == "1.2"
+        assert monitors[0].sdr_saturation == "0.98"
 
 
 class TestParseMode:
@@ -690,3 +787,69 @@ class TestResolveIdentifier:
     def test_unknown_port_no_match(self):
         a = _make_described("DP-1", "Acme A")
         assert resolve_identifier("DP-99", [a]) is None
+
+
+def _ipc_monitor(
+    color_management: str = "default",
+    sdr_brightness: float = 1.0,
+    sdr_saturation: float = 1.0,
+) -> Monitor:
+    """Build a hyprland_socket.Monitor with sane defaults for from_ipc tests."""
+    return Monitor(
+        name="DP-1",
+        make="",
+        model="",
+        width=1920,
+        height=1080,
+        refresh_rate=60.0,
+        x=0,
+        y=0,
+        scale=1.0,
+        color_management=color_management,
+        sdr_brightness=sdr_brightness,
+        sdr_saturation=sdr_saturation,
+    )
+
+
+class TestFromIpc:
+    def test_default_color_management_maps_to_none(self):
+        # IPC reports "default" when no cm preset is set — we treat that as no override.
+        mon = MonitorState.from_ipc(_ipc_monitor(color_management="default"))
+        assert mon.color_management is None
+
+    def test_empty_color_management_maps_to_none(self):
+        mon = MonitorState.from_ipc(_ipc_monitor(color_management=""))
+        assert mon.color_management is None
+
+    def test_sdr_brightness_default_maps_to_none(self):
+        mon = MonitorState.from_ipc(_ipc_monitor(sdr_brightness=1.0))
+        assert mon.sdr_brightness is None
+
+    def test_sdr_brightness_override_formatted(self):
+        mon = MonitorState.from_ipc(_ipc_monitor(sdr_brightness=1.2))
+        assert mon.sdr_brightness == "1.2"
+
+    def test_sdr_brightness_trailing_zero_stripped(self):
+        mon = MonitorState.from_ipc(_ipc_monitor(sdr_brightness=1.5))
+        assert mon.sdr_brightness == "1.5"
+
+    def test_sdr_brightness_zero_renders_as_zero(self):
+        # Regression: naive rstrip("0").rstrip(".") would produce "" for 0.0.
+        mon = MonitorState.from_ipc(_ipc_monitor(sdr_brightness=0.0))
+        assert mon.sdr_brightness == "0"
+
+    def test_sdr_saturation_zero_renders_as_zero(self):
+        mon = MonitorState.from_ipc(_ipc_monitor(sdr_saturation=0.0))
+        assert mon.sdr_saturation == "0"
+
+    def test_sdr_saturation_default_maps_to_none(self):
+        mon = MonitorState.from_ipc(_ipc_monitor(sdr_saturation=1.0))
+        assert mon.sdr_saturation is None
+
+    def test_sdr_saturation_override_formatted(self):
+        mon = MonitorState.from_ipc(_ipc_monitor(sdr_saturation=0.98))
+        assert mon.sdr_saturation == "0.98"
+
+    def test_real_cm_preset_preserved(self):
+        mon = MonitorState.from_ipc(_ipc_monitor(color_management="hdr"))
+        assert mon.color_management == "hdr"

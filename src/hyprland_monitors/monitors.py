@@ -40,10 +40,34 @@ _CONFIG_TO_FIELD: dict[str, str] = {
     "bitdepth": "bit_depth",
     "vrr": "vrr",
     "cm": "color_management",
+    "sdrbrightness": "sdr_brightness",
+    "sdrsaturation": "sdr_saturation",
 }
 
 # Hyprland's default bit depth when no override is active.
 _DEFAULT_BIT_DEPTH = 8
+
+# Hyprland's default for sdrbrightness/sdrsaturation when no override is active.
+_DEFAULT_SDR_VALUE = 1.0
+
+# Color-management presets that activate Hyprland's SDR mapping. When one of
+# these is active, omitting sdrbrightness/sdrsaturation from ``hl.monitor()``
+# leaves the previous value in place rather than resetting to 1.0 — see
+# ``lines_from_monitors``'s ``explicit_hdr_defaults`` flag.
+_HDR_CM_VALUES = frozenset({"hdr", "hdredid"})
+
+# Fields covered by the ``explicit_hdr_defaults`` flag.
+_HDR_DEFAULT_FIELDS = frozenset({"sdr_brightness", "sdr_saturation"})
+
+
+def _format_sdr_value(v: float) -> str:
+    """Format an SDR brightness/saturation value as a config-line string.
+
+    Keeps at least one integer digit so ``0`` renders as ``"0"`` rather than ``""``.
+    """
+    int_part, _, frac = f"{v:.2f}".partition(".")
+    frac = frac.rstrip("0")
+    return f"{int_part}.{frac}" if frac else int_part
 
 
 def _format_scale(value: float) -> str:
@@ -70,6 +94,8 @@ class MonitorState:
     bit_depth: str | None = None
     vrr: str | None = None
     color_management: str | None = None
+    sdr_brightness: str | None = None
+    sdr_saturation: str | None = None
     mirror_of: str | None = None
     disabled: bool = False
     description: str = ""
@@ -95,14 +121,29 @@ class MonitorState:
             # get written to config lines by lines_from_monitors.
             bit_depth=str(m.bit_depth) if m.bit_depth != _DEFAULT_BIT_DEPTH else None,
             vrr=None,  # IPC returns bool; saved config is authoritative
-            color_management=m.color_management,
+            # IPC reports "default" when no preset is active — treat as no override.
+            color_management=(
+                m.color_management
+                if m.color_management and m.color_management != "default"
+                else None
+            ),
+            sdr_brightness=(
+                _format_sdr_value(m.sdr_brightness)
+                if m.sdr_brightness != _DEFAULT_SDR_VALUE
+                else None
+            ),
+            sdr_saturation=(
+                _format_sdr_value(m.sdr_saturation)
+                if m.sdr_saturation != _DEFAULT_SDR_VALUE
+                else None
+            ),
             mirror_of=m.mirror_of if m.mirror_of != "none" else None,
             disabled=m.disabled,
             description=m.description,
         )
 
     def update_geometry_from_ipc(self, m: Monitor) -> None:
-        """Update geometry fields from IPC, preserving extras (vrr, bit_depth, color_management)."""
+        """Update geometry fields from IPC, preserving config-line extras (bit_depth, vrr, etc.)."""
         self.x = m.x
         self.y = m.y
         self.width = m.width
@@ -256,8 +297,19 @@ def _identifier_for(mon: MonitorState) -> str:
     return mon.name
 
 
-def lines_from_monitors(monitors: Sequence[MonitorState]) -> list[str]:
-    """Build monitor config lines from Monitor objects."""
+def lines_from_monitors(
+    monitors: Sequence[MonitorState], *, explicit_hdr_defaults: bool = False
+) -> list[str]:
+    """Build monitor config lines from Monitor objects.
+
+    When ``explicit_hdr_defaults`` is True, monitors with an HDR color-management
+    preset emit explicit ``sdrbrightness, 1`` / ``sdrsaturation, 1`` even when
+    those fields are ``None``. Hyprland's live ``hl.monitor()`` API is additive —
+    omitting these keys leaves the previous value in place rather than resetting
+    to 1.0 — so callers that apply the lines live (rather than write them to a
+    config file) should pass ``True`` to get reset-on-default semantics. Saved
+    config files normally leave it ``False`` to stay free of redundant defaults.
+    """
     lines = []
     for mon in monitors:
         ident = _identifier_for(mon)
@@ -270,8 +322,11 @@ def lines_from_monitors(monitors: Sequence[MonitorState]) -> list[str]:
         parts = [ident, res, pos, scale_str]
         if mon.transform:
             parts.extend(["transform", str(mon.transform)])
+        is_hdr = mon.color_management in _HDR_CM_VALUES
         for config_key, field in _CONFIG_TO_FIELD.items():
             val = getattr(mon, field)
+            if val is None and explicit_hdr_defaults and is_hdr and field in _HDR_DEFAULT_FIELDS:
+                val = _format_sdr_value(_DEFAULT_SDR_VALUE)
             if val is not None:
                 parts.extend([config_key, val])
         if mon.mirror_of is not None:
