@@ -81,7 +81,8 @@ Query monitor capabilities via EDID parsing and DRM kernel properties.
 from hyprland_monitors.hardware import get_monitor_capabilities
 
 caps = get_monitor_capabilities("DP-1")
-# {'hdr': True, 'ten_bit': True, 'vrr': False}
+# {'hdr': True, 'ten_bit': True, 'vrr': False,
+#  'max_luminance': 603.65, 'max_avg_luminance': 400.0, 'min_luminance': 0.03}
 ```
 
 ## License

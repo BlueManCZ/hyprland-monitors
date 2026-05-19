@@ -5,6 +5,13 @@ All notable changes to hyprland-monitors will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-05-19
+
+### Added
+
+- **Luminance extras** — new `sdr_min_luminance`, `sdr_max_luminance`, `min_luminance`, `max_luminance`, and `max_avg_luminance` fields on `MonitorState`; parsed from and emitted to `monitor =` config lines using the matching Hyprland keys. `from_ipc` leaves all five at `None`: in HDR mode Hyprland substitutes the panel's EDID mastering luminance for `sdrMinLuminance`/`sdrMaxLuminance`, so IPC values cannot distinguish a user override from an EDID-derived default. They are populated only from saved config via `merge_saved_state`.
+- **HDR mastering luminance from EDID** — `get_monitor_capabilities()` now also returns `max_luminance`, `max_avg_luminance`, and `min_luminance` (cd/m²) parsed from the panel's CTA-861 HDR Static Metadata Data Block. Each field is `None` when EDID omits the corresponding optional byte. Useful for picking safe per-panel defaults that don't over-drive OLEDs above their mastering luminance.
+
 ## [0.6.0] - 2026-05-17
 
 ### Added
@@ -65,6 +72,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Config parsing** — bidirectional conversion between MonitorState objects and Hyprland `monitor =` config lines, including extras (bitdepth, vrr, color_management)
 - **Hardware detection** — EDID parsing for HDR and 10-bit support, DRM kernel property queries for VRR capability
 
+[0.7.0]: https://github.com/BlueManCZ/hyprland-monitors/releases/tag/v0.7.0
 [0.6.0]: https://github.com/BlueManCZ/hyprland-monitors/releases/tag/v0.6.0
 [0.5.0]: https://github.com/BlueManCZ/hyprland-monitors/releases/tag/v0.5.0
 [0.4.0]: https://github.com/BlueManCZ/hyprland-monitors/releases/tag/v0.4.0

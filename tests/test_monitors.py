@@ -416,6 +416,23 @@ class TestLinesFromMonitors:
         lines = lines_from_monitors([mon])
         assert "sdrsaturation, 0.95" in lines[0]
 
+    def test_with_luminance_extras(self):
+        # All five luminance extras emit in declaration order, after sdrbrightness/sdrsaturation.
+        mon = _make_monitor("DP-1", 3440, 1440, 0, 0, scale=1.0)
+        mon.color_management = "hdr"
+        mon.sdr_min_luminance = "0.3"
+        mon.sdr_max_luminance = "120"
+        mon.min_luminance = "0.01"
+        mon.max_luminance = "1000"
+        mon.max_avg_luminance = "400"
+        lines = lines_from_monitors([mon])
+        assert lines[0] == (
+            "DP-1, 3440x1440@60.00Hz, 0x0, 1, "
+            "cm, hdr, "
+            "sdr_min_luminance, 0.3, sdr_max_luminance, 120, "
+            "min_luminance, 0.01, max_luminance, 1000, max_avg_luminance, 400"
+        )
+
     def test_explicit_hdr_defaults_emits_ones_for_none_in_hdr(self):
         # Hyprland's hl.monitor() keeps the previous SDR value when keys are
         # omitted; live-apply callers ask for explicit defaults so the apply
@@ -425,6 +442,21 @@ class TestLinesFromMonitors:
         lines = lines_from_monitors([mon], explicit_hdr_defaults=True)
         assert "sdrbrightness, 1" in lines[0]
         assert "sdrsaturation, 1" in lines[0]
+
+    def test_explicit_hdr_defaults_skips_luminance_fields(self):
+        # Luminance fields are intentionally NOT in _HDR_FIELD_DEFAULTS: Hyprland
+        # substitutes per-panel EDID mastering luminance in HDR mode, so there is
+        # no single "default" value we can safely emit as an explicit reset
+        # (clobbering an unconfigured 603-nit OLED with `sdr_max_luminance, 80`
+        # would dim SDR content to ~13% of its target).
+        mon = _make_monitor("DP-1", 3440, 1440, 0, 0, scale=1.0)
+        mon.color_management = "hdr"
+        lines = lines_from_monitors([mon], explicit_hdr_defaults=True)
+        assert "sdr_min_luminance" not in lines[0]
+        assert "sdr_max_luminance" not in lines[0]
+        assert "min_luminance" not in lines[0]
+        assert "max_luminance" not in lines[0]
+        assert "max_avg_luminance" not in lines[0]
 
     def test_explicit_hdr_defaults_keeps_user_overrides_in_hdr(self):
         mon = _make_monitor("DP-1", 3440, 1440, 0, 0, scale=1.0)
@@ -520,6 +552,22 @@ class TestParseExtras:
             "sdr_saturation": "0.98",
         }
 
+    def test_luminance_extras(self):
+        line = (
+            "DP-2, 3440x1440@165, 0x0, 1, cm, hdr, "
+            "sdr_min_luminance, 0.3, sdr_max_luminance, 120, "
+            "min_luminance, 0.01, max_luminance, 1000, max_avg_luminance, 400"
+        )
+        extras = parse_extras(line)
+        assert extras == {
+            "color_management": "hdr",
+            "sdr_min_luminance": "0.3",
+            "sdr_max_luminance": "120",
+            "min_luminance": "0.01",
+            "max_luminance": "1000",
+            "max_avg_luminance": "400",
+        }
+
     def test_no_extras(self):
         line = "DP-1, 1920x1080@60, 0x0, 1"
         assert parse_extras(line) == {}
@@ -575,6 +623,20 @@ class TestMergeSavedState:
         assert monitors[0].color_management == "hdr"
         assert monitors[0].sdr_brightness == "1.2"
         assert monitors[0].sdr_saturation == "0.98"
+
+    def test_merges_luminance_fields(self):
+        monitors = [_make_monitor("DP-2", 3440, 1440, 0, 0)]
+        saved = [
+            "monitor = DP-2, 3440x1440@165, 0x0, 1, cm, hdr, "
+            "sdr_min_luminance, 0.3, sdr_max_luminance, 120, "
+            "min_luminance, 0.01, max_luminance, 1000, max_avg_luminance, 400"
+        ]
+        merge_saved_state(monitors, saved)
+        assert monitors[0].sdr_min_luminance == "0.3"
+        assert monitors[0].sdr_max_luminance == "120"
+        assert monitors[0].min_luminance == "0.01"
+        assert monitors[0].max_luminance == "1000"
+        assert monitors[0].max_avg_luminance == "400"
 
 
 class TestParseMode:
@@ -793,6 +855,8 @@ def _ipc_monitor(
     color_management: str = "default",
     sdr_brightness: float = 1.0,
     sdr_saturation: float = 1.0,
+    sdr_min_luminance: float = 0.2,
+    sdr_max_luminance: float = 80.0,
 ) -> Monitor:
     """Build a hyprland_socket.Monitor with sane defaults for from_ipc tests."""
     return Monitor(
@@ -808,6 +872,8 @@ def _ipc_monitor(
         color_management=color_management,
         sdr_brightness=sdr_brightness,
         sdr_saturation=sdr_saturation,
+        sdr_min_luminance=sdr_min_luminance,
+        sdr_max_luminance=sdr_max_luminance,
     )
 
 
@@ -849,6 +915,18 @@ class TestFromIpc:
     def test_sdr_saturation_override_formatted(self):
         mon = MonitorState.from_ipc(_ipc_monitor(sdr_saturation=0.98))
         assert mon.sdr_saturation == "0.98"
+
+    def test_luminance_fields_always_none_from_ipc(self):
+        # In HDR mode, Hyprland substitutes the panel's EDID mastering luminance
+        # for sdrMinLuminance/sdrMaxLuminance, so IPC values can't distinguish
+        # "user override" from "EDID-derived default". min/max/max_avg_luminance
+        # aren't exposed by IPC at all. All five only come from saved config.
+        mon = MonitorState.from_ipc(_ipc_monitor(sdr_min_luminance=0.0, sdr_max_luminance=603.0))
+        assert mon.sdr_min_luminance is None
+        assert mon.sdr_max_luminance is None
+        assert mon.min_luminance is None
+        assert mon.max_luminance is None
+        assert mon.max_avg_luminance is None
 
     def test_real_cm_preset_preserved(self):
         mon = MonitorState.from_ipc(_ipc_monitor(color_management="hdr"))

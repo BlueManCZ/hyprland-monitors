@@ -27,6 +27,21 @@ class MonitorCapabilities(TypedDict):
     """True if the display supports 10-bit (or higher) color depth."""
     vrr: bool
     """True if the display supports variable refresh rate."""
+    max_luminance: float | None
+    """Desired content max luminance in cd/m², from the EDID HDR Static Metadata block.
+
+    None when EDID does not include the optional max luminance byte.
+    """
+    max_avg_luminance: float | None
+    """Desired content max frame-average luminance in cd/m², from EDID.
+
+    None when EDID does not include the optional max-frame-average byte.
+    """
+    min_luminance: float | None
+    """Desired content min luminance in cd/m², from EDID.
+
+    None when EDID lacks either the min byte or the max byte it is derived from.
+    """
 
 
 class _EdidCaps(NamedTuple):
@@ -34,6 +49,9 @@ class _EdidCaps(NamedTuple):
 
     ten_bit: bool
     hdr: bool
+    max_luminance: float | None = None
+    max_avg_luminance: float | None = None
+    min_luminance: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -109,8 +127,34 @@ def _find_drm_connector(name: str) -> tuple[str, Path] | None:
 # ---------------------------------------------------------------------------
 
 
+def _decode_hdr_max_luminance(code: int) -> float:
+    """Decode a CTA-861 HDR Static Metadata max-luminance byte to cd/m²."""
+    return 50.0 * 2.0 ** (code / 32.0)
+
+
+def _parse_hdr_static_metadata(
+    payload: bytes | bytearray,
+) -> tuple[float | None, float | None, float | None]:
+    """Parse an HDR Static Metadata Data Block payload (CTA-861-H §7.5.13).
+
+    *payload* starts with the extended tag code (0x06) and is up to six bytes:
+    extended tag, EOTF flags, static metadata flags, then optional Desired
+    Content Max Luminance, Max Frame-Average Luminance, and Min Luminance code
+    bytes. The optional luminance bytes are ordered max → max-avg → min and each
+    requires the preceding one; older displays may advertise HDR support (the
+    block exists) without any of them. Returns ``(max, max_avg, min)`` cd/m²
+    values, with ``None`` for any field the EDID omits.
+    """
+    if len(payload) < 4:
+        return None, None, None
+    max_lum = _decode_hdr_max_luminance(payload[3])
+    max_avg_lum = _decode_hdr_max_luminance(payload[4]) if len(payload) >= 5 else None
+    min_lum = max_lum * (payload[5] / 255.0) ** 2 / 100.0 if len(payload) >= 6 else None
+    return max_lum, max_avg_lum, min_lum
+
+
 def _read_edid_capabilities(edid_data: bytes | bytearray) -> _EdidCaps:
-    """Parse EDID bytes for 10-bit and HDR capabilities."""
+    """Parse EDID bytes for 10-bit, HDR, and HDR mastering luminance."""
     if len(edid_data) < _EDID_BLOCK_SIZE:
         return _EdidCaps(ten_bit=False, hdr=False)
 
@@ -140,7 +184,15 @@ def _read_edid_capabilities(edid_data: bytes | bytearray) -> _EdidCaps:
             if tag == 7 and length >= 1:  # Extended tag block
                 ext_tag = ext[pos + 1]
                 if ext_tag == 6:  # HDR Static Metadata Data Block
-                    return _EdidCaps(ten_bit=ten_bit, hdr=True)
+                    payload = ext[pos + 1 : pos + 1 + length]
+                    max_lum, max_avg_lum, min_lum = _parse_hdr_static_metadata(payload)
+                    return _EdidCaps(
+                        ten_bit=ten_bit,
+                        hdr=True,
+                        max_luminance=max_lum,
+                        max_avg_luminance=max_avg_lum,
+                        min_luminance=min_lum,
+                    )
             pos += length + 1
 
     return _EdidCaps(ten_bit=ten_bit, hdr=False)
@@ -359,4 +411,7 @@ def get_monitor_capabilities(name: str) -> MonitorCapabilities | None:
         ten_bit=edid_caps.ten_bit,
         hdr=edid_caps.hdr,
         vrr=_read_drm_vrr_capable(name, card),
+        max_luminance=edid_caps.max_luminance,
+        max_avg_luminance=edid_caps.max_avg_luminance,
+        min_luminance=edid_caps.min_luminance,
     )

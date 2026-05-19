@@ -36,19 +36,37 @@ def _make_base_edid(version=(1, 4), depth_code=0, num_extensions=0):
     return data
 
 
-def _make_cea_extension(has_hdr=False):
-    """Build a 128-byte CEA-861 extension block."""
+def _make_cea_extension(
+    has_hdr: bool = False,
+    *,
+    max_lum_code: int | None = None,
+    max_avg_lum_code: int | None = None,
+    min_lum_code: int | None = None,
+) -> bytearray:
+    """Build a 128-byte CEA-861 extension block.
+
+    When ``has_hdr`` is set, embeds an HDR Static Metadata Data Block. Pass any
+    of the ``*_code`` parameters to include the corresponding optional luminance
+    byte; later bytes are only included when the earlier ones are present (per
+    spec).
+    """
     ext = bytearray(128)
     ext[0] = 0x02  # CEA extension tag
     ext[1] = 0x03  # Revision 3
 
     pos = 4
     if has_hdr:
-        ext[pos] = (7 << 5) | 3
-        ext[pos + 1] = 6
-        ext[pos + 2] = 0x01
-        ext[pos + 3] = 0x00
-        pos += 4
+        # Required: extended tag (0x06), EOTF flags, static metadata flags.
+        block_bytes = [0x06, 0x01, 0x00]
+        for code in (max_lum_code, max_avg_lum_code, min_lum_code):
+            if code is None:
+                break
+            block_bytes.append(code & 0xFF)
+        length = len(block_bytes)
+        ext[pos] = (7 << 5) | length
+        for i, b in enumerate(block_bytes):
+            ext[pos + 1 + i] = b
+        pos += 1 + length
 
     ext[2] = pos  # DTD start offset
     return ext
@@ -109,6 +127,57 @@ class TestEdidParsing:
         cea = _make_cea_extension(has_hdr=False)
         caps = _read_edid_capabilities(bytes(base) + bytes(cea))
         assert caps.hdr is False
+
+    def test_hdr_block_without_luminance_bytes(self):
+        # Minimal HDR block: just EOTF + static metadata flags, no luminance.
+        # The block is valid HDR signalling; luminance fields stay None.
+        base = _make_base_edid(depth_code=3, num_extensions=1)
+        cea = _make_cea_extension(has_hdr=True)
+        caps = _read_edid_capabilities(bytes(base) + bytes(cea))
+        assert caps.hdr is True
+        assert caps.max_luminance is None
+        assert caps.max_avg_luminance is None
+        assert caps.min_luminance is None
+
+    def test_hdr_block_decodes_max_luminance(self):
+        # code 115 → 50 * 2^(115/32) ≈ 603.65 cd/m² (the LG OLED ULTRAGEAR+ panel).
+        base = _make_base_edid(depth_code=3, num_extensions=1)
+        cea = _make_cea_extension(has_hdr=True, max_lum_code=115)
+        caps = _read_edid_capabilities(bytes(base) + bytes(cea))
+        assert caps.hdr is True
+        assert caps.max_luminance is not None
+        assert caps.max_luminance == pytest.approx(603.65, abs=0.5)
+        # Optional bytes that weren't included stay None.
+        assert caps.max_avg_luminance is None
+        assert caps.min_luminance is None
+
+    def test_hdr_block_decodes_all_three_luminance_values(self):
+        # 603 cd/m² peak, 400 cd/m² average, 0.03 cd/m² minimum
+        # (matching the drm_info reading from the LG OLED ULTRAGEAR+).
+        base = _make_base_edid(depth_code=3, num_extensions=1)
+        cea = _make_cea_extension(
+            has_hdr=True,
+            max_lum_code=115,
+            max_avg_lum_code=96,  # 50 * 2^(96/32) = 400 cd/m²
+            min_lum_code=18,  # 603 * (18/255)^2 / 100 ≈ 0.03 cd/m²
+        )
+        caps = _read_edid_capabilities(bytes(base) + bytes(cea))
+        assert caps.max_luminance == pytest.approx(603.65, abs=0.5)
+        assert caps.max_avg_luminance == pytest.approx(400.0, abs=1.0)
+        assert caps.min_luminance == pytest.approx(0.030, abs=0.001)
+
+    def test_hdr_block_decodes_295_nit_panel(self):
+        # Second monitor from naveline67's setup: 295 cd/m² peak, 0.298 cd/m² min.
+        base = _make_base_edid(depth_code=3, num_extensions=1)
+        cea = _make_cea_extension(
+            has_hdr=True,
+            max_lum_code=82,
+            max_avg_lum_code=82,
+            min_lum_code=81,
+        )
+        caps = _read_edid_capabilities(bytes(base) + bytes(cea))
+        assert caps.max_luminance == pytest.approx(295.2, abs=0.5)
+        assert caps.min_luminance == pytest.approx(0.298, abs=0.005)
 
     def test_old_edid_version_ignores_depth(self):
         edid = _make_base_edid(version=(1, 3), depth_code=3)

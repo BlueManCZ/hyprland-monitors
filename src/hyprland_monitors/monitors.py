@@ -42,32 +42,54 @@ _CONFIG_TO_FIELD: dict[str, str] = {
     "cm": "color_management",
     "sdrbrightness": "sdr_brightness",
     "sdrsaturation": "sdr_saturation",
+    "sdr_min_luminance": "sdr_min_luminance",
+    "sdr_max_luminance": "sdr_max_luminance",
+    "min_luminance": "min_luminance",
+    "max_luminance": "max_luminance",
+    "max_avg_luminance": "max_avg_luminance",
 }
 
 # Hyprland's default bit depth when no override is active.
 _DEFAULT_BIT_DEPTH = 8
 
-# Hyprland's default for sdrbrightness/sdrsaturation when no override is active.
-_DEFAULT_SDR_VALUE = 1.0
-
-# Color-management presets that activate Hyprland's SDR mapping. When one of
-# these is active, omitting sdrbrightness/sdrsaturation from ``hl.monitor()``
-# leaves the previous value in place rather than resetting to 1.0 — see
-# ``lines_from_monitors``'s ``explicit_hdr_defaults`` flag.
+# Color-management presets that activate Hyprland's HDR pipeline. While one of
+# these is active, omitting SDR/luminance keys from ``hl.monitor()`` leaves the
+# previous value in place rather than resetting — see ``lines_from_monitors``'s
+# ``explicit_hdr_defaults`` flag.
 _HDR_CM_VALUES = frozenset({"hdr", "hdredid"})
 
-# Fields covered by the ``explicit_hdr_defaults`` flag.
-_HDR_DEFAULT_FIELDS = frozenset({"sdr_brightness", "sdr_saturation"})
+# HDR-pipeline fields and the value Hyprland reports when the key is unset.
+# Doubles as the IPC-default lookup in ``from_ipc``, so the values stay in
+# sync across "is this an override?" and "what to emit for an explicit reset".
+#
+# ``sdr_min_luminance``/``sdr_max_luminance`` are intentionally omitted even
+# though IPC exposes them: in HDR mode Hyprland substitutes the panel's EDID
+# mastering luminance (so e.g. an unconfigured 603-nit OLED reports
+# ``sdrMaxLuminance: 603`` rather than the non-HDR fallback of 80). There is
+# no single value we can compare IPC against to tell "user override" from
+# "EDID-derived default", so we can't safely round-trip them via IPC.
+#
+# ``min_luminance``/``max_luminance``/``max_avg_luminance`` are omitted for
+# the same reason — Hyprland doesn't expose their defaults at all.
+_HDR_FIELD_DEFAULTS: dict[str, float] = {
+    "sdr_brightness": 1.0,
+    "sdr_saturation": 1.0,
+}
 
 
-def _format_sdr_value(v: float) -> str:
-    """Format an SDR brightness/saturation value as a config-line string.
+def _format_float_value(v: float) -> str:
+    """Format a float as a config-line value (2dp, no trailing zeros).
 
     Keeps at least one integer digit so ``0`` renders as ``"0"`` rather than ``""``.
     """
     int_part, _, frac = f"{v:.2f}".partition(".")
     frac = frac.rstrip("0")
     return f"{int_part}.{frac}" if frac else int_part
+
+
+def _ipc_float_extra(value: float, default: float) -> str | None:
+    """Format an IPC float as a config-line override, or None when at default."""
+    return _format_float_value(value) if value != default else None
 
 
 def _format_scale(value: float) -> str:
@@ -96,6 +118,11 @@ class MonitorState:
     color_management: str | None = None
     sdr_brightness: str | None = None
     sdr_saturation: str | None = None
+    sdr_min_luminance: str | None = None
+    sdr_max_luminance: str | None = None
+    min_luminance: str | None = None
+    max_luminance: str | None = None
+    max_avg_luminance: str | None = None
     mirror_of: str | None = None
     disabled: bool = False
     description: str = ""
@@ -127,16 +154,16 @@ class MonitorState:
                 if m.color_management and m.color_management != "default"
                 else None
             ),
-            sdr_brightness=(
-                _format_sdr_value(m.sdr_brightness)
-                if m.sdr_brightness != _DEFAULT_SDR_VALUE
-                else None
+            sdr_brightness=_ipc_float_extra(
+                m.sdr_brightness, _HDR_FIELD_DEFAULTS["sdr_brightness"]
             ),
-            sdr_saturation=(
-                _format_sdr_value(m.sdr_saturation)
-                if m.sdr_saturation != _DEFAULT_SDR_VALUE
-                else None
+            sdr_saturation=_ipc_float_extra(
+                m.sdr_saturation, _HDR_FIELD_DEFAULTS["sdr_saturation"]
             ),
+            # sdr_min_luminance / sdr_max_luminance: IPC reports the live value
+            # (EDID-derived in HDR mode), which we can't distinguish from a user
+            # override. min/max/max_avg_luminance aren't exposed by IPC at all.
+            # All five are populated only from saved config via merge_saved_state.
             mirror_of=m.mirror_of if m.mirror_of != "none" else None,
             disabled=m.disabled,
             description=m.description,
@@ -309,6 +336,7 @@ def lines_from_monitors(
     to 1.0 — so callers that apply the lines live (rather than write them to a
     config file) should pass ``True`` to get reset-on-default semantics. Saved
     config files normally leave it ``False`` to stay free of redundant defaults.
+    The luminance keys are intentionally excluded — see ``_HDR_FIELD_DEFAULTS``.
     """
     lines = []
     for mon in monitors:
@@ -325,8 +353,8 @@ def lines_from_monitors(
         is_hdr = mon.color_management in _HDR_CM_VALUES
         for config_key, field in _CONFIG_TO_FIELD.items():
             val = getattr(mon, field)
-            if val is None and explicit_hdr_defaults and is_hdr and field in _HDR_DEFAULT_FIELDS:
-                val = _format_sdr_value(_DEFAULT_SDR_VALUE)
+            if val is None and explicit_hdr_defaults and is_hdr and field in _HDR_FIELD_DEFAULTS:
+                val = _format_float_value(_HDR_FIELD_DEFAULTS[field])
             if val is not None:
                 parts.extend([config_key, val])
         if mon.mirror_of is not None:
