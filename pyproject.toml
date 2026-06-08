@@ -15,7 +15,7 @@ classifiers = [
     "Topic :: Desktop Environment",
     "Typing :: Typed",
 ]
-dependencies = ["hyprland-socket>=0.12.1"]
+dependencies = ["hyprland-socket>=0.12.2"]
 
 [project.urls]
 Repository = "https://github.com/BlueManCZ/hyprland-monitors"

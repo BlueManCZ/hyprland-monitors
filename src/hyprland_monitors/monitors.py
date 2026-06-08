@@ -76,6 +76,25 @@ _HDR_FIELD_DEFAULTS: dict[str, float] = {
     "sdr_saturation": 1.0,
 }
 
+# Specific special keyword values for Mode as per Hyprland
+# https://wiki.hypr.land/Configuring/Basics/Monitors/#general
+_MODE_KEYWORDS = frozenset({"preferred", "highres", "highrr", "maxwidth"})
+
+# Specific special keyword values for Position as per Hyprland.
+_POSITION_KEYWORDS = frozenset(
+    {
+        "auto",
+        "auto-right",
+        "auto-left",
+        "auto-up",
+        "auto-down",
+        "auto-center-right",
+        "auto-center-left",
+        "auto-center-up",
+        "auto-center-down",
+    }
+)
+
 
 def _format_float_value(v: float) -> str:
     """Format a float as a config-line value (2dp, no trailing zeros).
@@ -124,6 +143,8 @@ class MonitorState:
     max_luminance: str | None = None
     max_avg_luminance: str | None = None
     mirror_of: str | None = None
+    mode: str | None = None
+    position: str | None = None
     disabled: bool = False
     description: str = ""
     identify_by_description: bool = False
@@ -144,11 +165,8 @@ class MonitorState:
             transform=m.transform,
             focused=m.focused,
             available_modes=tuple(m.available_modes),
-            # Extras are None when at their default — only non-default overrides
-            # get written to config lines by lines_from_monitors.
             bit_depth=str(m.bit_depth) if m.bit_depth != _DEFAULT_BIT_DEPTH else None,
             vrr=None,  # IPC returns bool; saved config is authoritative
-            # IPC reports "default" when no preset is active — treat as no override.
             color_management=(
                 m.color_management
                 if m.color_management and m.color_management != "default"
@@ -160,11 +178,11 @@ class MonitorState:
             sdr_saturation=_ipc_float_extra(
                 m.sdr_saturation, _HDR_FIELD_DEFAULTS["sdr_saturation"]
             ),
-            # sdr_min_luminance / sdr_max_luminance: IPC reports the live value
-            # (EDID-derived in HDR mode), which we can't distinguish from a user
-            # override. min/max/max_avg_luminance aren't exposed by IPC at all.
-            # All five are populated only from saved config via merge_saved_state.
             mirror_of=m.mirror_of if m.mirror_of != "none" else None,
+            # IPC returns raw resolved numbers; default configuration abstract values to None.
+            # These are populated later from saved configurations via merge_saved_state.
+            mode=None,
+            position=None,
             disabled=m.disabled,
             description=m.description,
         )
@@ -233,15 +251,35 @@ def nearest_scale_index(scales: Sequence[ScaleOption], target: float) -> int:
     return min(range(len(scales)), key=lambda i: abs(scales[i].value - target))
 
 
-def is_adjacent(a: MonitorState, b: MonitorState) -> bool:
-    """Check if two monitors share at least one pixel of edge (adjacent, no gap)."""
-    aw, ah = a.effective_size
-    bw, bh = b.effective_size
-    x_overlap = a.x < b.x + bw and a.x + aw > b.x
-    y_overlap = a.y < b.y + bh and a.y + ah > b.y
-    h_touch = (a.x + aw == b.x or b.x + bw == a.x) and y_overlap
-    v_touch = (a.y + ah == b.y or b.y + bh == a.y) and x_overlap
-    return h_touch or v_touch
+def is_adjacent(target: MonitorState, all_monitors: list[MonitorState]) -> bool:
+    """Check if target monitor shares an edge with any other enabled monitor."""
+    # Only consider currently enabled monitors for the layout cluster
+    active_monitors = [m for m in all_monitors if not m.disabled and m.name != target.name]
+
+    # If it's the only monitor, it has no neighbors
+    if not active_monitors:
+        return False
+
+    # Define the bounding box of the target monitor
+    tx1, ty1 = target.x, target.y
+    aw, ah = target.effective_size
+    tx2, ty2 = target.x + aw, target.y + ah
+
+    for other in active_monitors:
+        ox1, oy1 = other.x, other.y
+        obw, obh = other.effective_size
+        ox2, oy2 = other.x + obw, other.y + obh
+
+        # A monitor is adjacent if it shares a boundary (even partially)
+        # Check horizontal adjacency (left/right)
+        horiz_touch = (tx1 == ox2 or tx2 == ox1) and (ty1 < oy2 and ty2 > oy1)
+        # Check vertical adjacency (top/bottom)
+        vert_touch = (ty1 == oy2 or ty2 == oy1) and (tx1 < ox2 and tx2 > ox1)
+
+        if horiz_touch or vert_touch:
+            return True
+
+    return False
 
 
 def all_monitors_connected(monitors: Sequence[MonitorState]) -> bool:
@@ -257,29 +295,33 @@ def all_monitors_connected(monitors: Sequence[MonitorState]) -> bool:
     visited = {0}
     stack = [0]
     while stack:
-        idx = stack.pop()
-        for j, other in enumerate(enabled):
-            if j not in visited and is_adjacent(enabled[idx], other):
-                visited.add(j)
-                stack.append(j)
+        curr = stack.pop()
+        for i, other in enumerate(enabled):
+            if i not in visited and is_adjacent(enabled[curr], [other]):
+                visited.add(i)
+                stack.append(i)
+
     return len(visited) == len(enabled)
 
 
 def adjust_neighbors(
     monitors: Sequence[MonitorState], mon: MonitorState, old_w: int, old_h: int
 ) -> None:
-    """Shift monitors to maintain adjacency after a resize.
+    """Shift monitors to maintain adjacency after a resize."""
+    if mon.position and mon.position.startswith("auto"):
+        return  # Managed dynamically by Hyprland
 
-    old_w/old_h are the effective size before the change.
-    mon must already contain the new values.
-    """
     new_w, new_h = mon.effective_size
     dw = new_w - old_w
     dh = new_h - old_h
     if dw == 0 and dh == 0:
         return
     for other in monitors:
-        if other is mon or other.mirror_of:
+        if (
+            other is mon
+            or other.mirror_of
+            or (other.position and other.position.startswith("auto"))
+        ):
             continue
         if dw != 0 and other.x >= mon.x + old_w:
             other.x += dw
@@ -344,10 +386,15 @@ def lines_from_monitors(
         if mon.disabled:
             lines.append(f"{ident}, disable")
             continue
-        res = f"{mon.width}x{mon.height}@{mon.refresh_rate:.2f}Hz"
-        pos = f"{mon.x}x{mon.y}"
+
+        # Use mode keyword/string if present, otherwise fallback to explicit dimensions
+        res = mon.mode if mon.mode else f"{mon.width}x{mon.height}@{mon.refresh_rate:.2f}Hz"
+        # Use position keyword/string if present, otherwise fallback to explicit coordinates
+        pos = mon.position if mon.position else f"{mon.x}x{mon.y}"
+
         scale_str = _format_scale(mon.scale)
         parts = [ident, res, pos, scale_str]
+
         if mon.transform:
             parts.extend(["transform", str(mon.transform)])
         is_hdr = mon.color_management in _HDR_CM_VALUES
@@ -443,6 +490,40 @@ def merge_saved_state(monitors: Sequence[MonitorState], saved_lines: list[str]) 
             mon.disabled = True
             continue
         if len(parts) >= 4:
+            # 1. Parse positional mode / resolution string
+            mode_val = parts[1]
+            if mode_val.lower() in _MODE_KEYWORDS:
+                mon.mode = mode_val.lower()
+            else:
+                mon.mode = mode_val
+                try:
+                    parsed = parse_mode(mode_val)
+                    mon.width = parsed["width"]
+                    mon.height = parsed["height"]
+                    mon.refresh_rate = parsed["refresh_rate"]
+                except Exception:
+                    pass
+
+            # 2. Parse positional layout / coordinate string
+            pos_val = parts[2]
+            if pos_val.lower() in _POSITION_KEYWORDS:
+                mon.position = pos_val.lower()
+            else:
+                mon.position = pos_val
+                try:
+                    x_str, y_str = pos_val.rsplit("x", 1)
+                    mon.x = int(x_str)
+                    mon.y = int(y_str)
+                except Exception:
+                    pass
+
+            # 3. Parse positional scale
+            try:
+                mon.scale = float(parts[3])
+            except Exception:
+                pass
+
+            # 4. Parse any trailing extra keys (bitdepth, cm, etc.)
             for field, value in _parse_extras_from_parts(parts).items():
                 setattr(mon, field, value)
 
