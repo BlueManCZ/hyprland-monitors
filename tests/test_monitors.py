@@ -639,6 +639,64 @@ class TestMergeSavedState:
         assert monitors[0].max_avg_luminance == "400"
 
 
+class TestModeAndPositionKeywords:
+    def test_merge_records_keywords(self):
+        mon = _make_monitor("DP-1", 1920, 1080, 0, 0)
+        merge_saved_state([mon], ["monitor = DP-1, highres, auto-right, 1"])
+        assert mon.mode == "highres"
+        assert mon.position == "auto-right"
+
+    def test_keyword_match_is_case_insensitive(self):
+        mon = _make_monitor("DP-1", 1920, 1080, 0, 0)
+        merge_saved_state([mon], ["monitor = DP-1, PREFERRED, AUTO, 1"])
+        assert mon.mode == "preferred"
+        assert mon.position == "auto"
+
+    def test_literal_resolution_leaves_mode_none(self):
+        mon = _make_monitor("DP-1", 1920, 1080, 0, 0)
+        merge_saved_state([mon], ["monitor = DP-1, 1920x1080@60.00Hz, 0x0, 1"])
+        assert mon.mode is None
+        assert mon.position is None
+
+    def test_literal_does_not_clobber_ipc_geometry(self):
+        # Saved literals must not overwrite live IPC geometry, and it stays editable.
+        mon = _make_monitor("DP-1", 3440, 1440, 100, 200, scale=1.0)
+        merge_saved_state([mon], ["monitor = DP-1, 2560x1080@60.00Hz, 50x50, 2"])
+        assert (mon.width, mon.height, mon.x, mon.y, mon.scale) == (3440, 1440, 100, 200, 1.0)
+        mon.width, mon.height, mon.refresh_rate = 2560, 1080, 75.0
+        assert lines_from_monitors([mon])[0] == "DP-1, 2560x1080@75.00Hz, 100x200, 1"
+
+    def test_lines_emit_keywords(self):
+        mon = _make_monitor("DP-1", 1920, 1080, 0, 0)
+        mon.mode = "preferred"
+        mon.position = "auto"
+        assert lines_from_monitors([mon])[0] == "DP-1, preferred, auto, 1"
+
+    def test_keyword_round_trip(self):
+        mon = _make_monitor("DP-1", 1920, 1080, 0, 0)
+        mon.mode = "preferred"
+        mon.position = "auto"
+        line = "monitor = " + lines_from_monitors([mon])[0]
+        fresh = _make_monitor("DP-1", 1920, 1080, 0, 0)
+        merge_saved_state([fresh], [line])
+        assert fresh.mode == "preferred"
+        assert fresh.position == "auto"
+
+    def test_adjust_neighbors_skips_auto_positioned_target(self):
+        a = _make_monitor("A", 1920, 1080, 0, 0)
+        b = _make_monitor("B", 1920, 1080, 1920, 0)
+        a.position = "auto"
+        _do_adjust([a, b], 0, {"scale": 2.0})
+        assert b.x == 1920  # neighbor untouched: auto monitor isn't ours to anchor
+
+    def test_adjust_neighbors_skips_auto_positioned_neighbor(self):
+        a = _make_monitor("A", 3440, 1440, 0, 0, scale=1.0)
+        b = _make_monitor("B", 1920, 1080, 3440, 0, scale=1.0)
+        b.position = "auto"
+        _do_adjust([a, b], 0, {"scale": 2.0})
+        assert b.x == 3440  # auto neighbor is positioned by Hyprland, not shifted
+
+
 class TestParseMode:
     def test_basic(self):
         result = parse_mode("1920x1080@60.00Hz")

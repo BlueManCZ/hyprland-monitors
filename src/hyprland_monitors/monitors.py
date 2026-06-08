@@ -76,6 +76,25 @@ _HDR_FIELD_DEFAULTS: dict[str, float] = {
     "sdr_saturation": 1.0,
 }
 
+# Hyprland's special resolution/position keywords, accepted in place of an
+# explicit "WxH@RHz" / "XxY" value.
+# https://wiki.hypr.land/Configuring/Basics/Monitors/#general
+_MODE_KEYWORDS = frozenset({"preferred", "highres", "highrr", "maxwidth"})
+
+_POSITION_KEYWORDS = frozenset(
+    {
+        "auto",
+        "auto-right",
+        "auto-left",
+        "auto-up",
+        "auto-down",
+        "auto-center-right",
+        "auto-center-left",
+        "auto-center-up",
+        "auto-center-down",
+    }
+)
+
 
 def _format_float_value(v: float) -> str:
     """Format a float as a config-line value (2dp, no trailing zeros).
@@ -124,6 +143,9 @@ class MonitorState:
     max_luminance: str | None = None
     max_avg_luminance: str | None = None
     mirror_of: str | None = None
+    # Hyprland keyword overrides ("preferred"/"auto"); None = use width/height/x/y.
+    mode: str | None = None
+    position: str | None = None
     disabled: bool = False
     description: str = ""
     identify_by_description: bool = False
@@ -165,6 +187,8 @@ class MonitorState:
             # override. min/max/max_avg_luminance aren't exposed by IPC at all.
             # All five are populated only from saved config via merge_saved_state.
             mirror_of=m.mirror_of if m.mirror_of != "none" else None,
+            mode=None,  # keyword overrides, restored from saved config by merge_saved_state
+            position=None,
             disabled=m.disabled,
             description=m.description,
         )
@@ -273,13 +297,16 @@ def adjust_neighbors(
     old_w/old_h are the effective size before the change.
     mon must already contain the new values.
     """
+    # Keyword-positioned monitors (auto, …) are placed by the compositor — leave them.
+    if mon.position:
+        return
     new_w, new_h = mon.effective_size
     dw = new_w - old_w
     dh = new_h - old_h
     if dw == 0 and dh == 0:
         return
     for other in monitors:
-        if other is mon or other.mirror_of:
+        if other is mon or other.mirror_of or other.position:
             continue
         if dw != 0 and other.x >= mon.x + old_w:
             other.x += dw
@@ -344,8 +371,9 @@ def lines_from_monitors(
         if mon.disabled:
             lines.append(f"{ident}, disable")
             continue
-        res = f"{mon.width}x{mon.height}@{mon.refresh_rate:.2f}Hz"
-        pos = f"{mon.x}x{mon.y}"
+        # A keyword override (mode/position) wins over the explicit values.
+        res = mon.mode or f"{mon.width}x{mon.height}@{mon.refresh_rate:.2f}Hz"
+        pos = mon.position or f"{mon.x}x{mon.y}"
         scale_str = _format_scale(mon.scale)
         parts = [ident, res, pos, scale_str]
         if mon.transform:
@@ -428,6 +456,9 @@ def merge_saved_state(monitors: Sequence[MonitorState], saved_lines: list[str]) 
     Saved config wins for values IPC can't distinguish (e.g. vrr=2 vs vrr=1
     both show as vrr:true in IPC). Also restores ``disabled`` and sets
     ``identify_by_description`` for monitors saved with a ``desc:`` token.
+
+    Resolution/position are recorded only when they hold a Hyprland keyword
+    (``preferred``, ``auto``); literal values defer to IPC, the live geometry source.
     """
     for raw_line in saved_lines:
         parts = _split_config_line(raw_line)
@@ -443,6 +474,10 @@ def merge_saved_state(monitors: Sequence[MonitorState], saved_lines: list[str]) 
             mon.disabled = True
             continue
         if len(parts) >= 4:
+            mode_val = parts[1].lower()
+            mon.mode = mode_val if mode_val in _MODE_KEYWORDS else None
+            pos_val = parts[2].lower()
+            mon.position = pos_val if pos_val in _POSITION_KEYWORDS else None
             for field, value in _parse_extras_from_parts(parts).items():
                 setattr(mon, field, value)
 
