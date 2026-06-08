@@ -5,6 +5,12 @@ All notable changes to hyprland-monitors will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-06-08
+
+### Added
+
+- **Resolution/position keywords** — new `mode` and `position` fields on `MonitorState` for Hyprland's special keywords (`preferred`, `highres`, `auto`, `auto-right`, …); parsed from saved config and emitted in place of explicit `WxH@RHz` / `XxY` values. Keyword-positioned monitors are excluded from `adjust_neighbors`, since the compositor places them. [#1](https://github.com/BlueManCZ/hyprland-monitors/pull/1)
+
 ## [0.7.0] - 2026-05-19
 
 ### Added
@@ -72,6 +78,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Config parsing** — bidirectional conversion between MonitorState objects and Hyprland `monitor =` config lines, including extras (bitdepth, vrr, color_management)
 - **Hardware detection** — EDID parsing for HDR and 10-bit support, DRM kernel property queries for VRR capability
 
+[0.8.0]: https://github.com/BlueManCZ/hyprland-monitors/releases/tag/v0.8.0
 [0.7.0]: https://github.com/BlueManCZ/hyprland-monitors/releases/tag/v0.7.0
 [0.6.0]: https://github.com/BlueManCZ/hyprland-monitors/releases/tag/v0.6.0
 [0.5.0]: https://github.com/BlueManCZ/hyprland-monitors/releases/tag/v0.5.0
