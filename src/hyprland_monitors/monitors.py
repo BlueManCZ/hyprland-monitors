@@ -55,7 +55,7 @@ _DEFAULT_BIT_DEPTH = 8
 # Color-management presets that activate Hyprland's HDR pipeline. While one of
 # these is active, omitting SDR/luminance keys from ``hl.monitor()`` leaves the
 # previous value in place rather than resetting — see ``lines_from_monitors``'s
-# ``explicit_hdr_defaults`` flag.
+# ``for_live_apply`` flag.
 _HDR_CM_VALUES = frozenset({"hdr", "hdredid"})
 
 # HDR-pipeline fields and the value Hyprland reports when the key is unset.
@@ -74,6 +74,17 @@ _HDR_CM_VALUES = frozenset({"hdr", "hdredid"})
 _HDR_FIELD_DEFAULTS: dict[str, float] = {
     "sdr_brightness": 1.0,
     "sdr_saturation": 1.0,
+}
+
+# Values that reset a cleared override to Hyprland's own default on live apply,
+# matching the CMonitorRule defaults (m_enable10bit = false, m_cmType = CM_SRGB).
+# Verified against 0.56.1: sending these actually resets, omitting them doesn't.
+#
+# ``vrr`` has no entry — inheriting the global needs an explicit -1 sentinel,
+# which Hyprland does not accept yet.
+_LIVE_RESET_VALUES: dict[str, str] = {
+    "bit_depth": str(_DEFAULT_BIT_DEPTH),
+    "color_management": "srgb",
 }
 
 # Hyprland's special resolution/position keywords, accepted in place of an
@@ -352,18 +363,30 @@ def _identifier_for(mon: MonitorState) -> str:
 
 
 def lines_from_monitors(
-    monitors: Sequence[MonitorState], *, explicit_hdr_defaults: bool = False
+    monitors: Sequence[MonitorState], *, for_live_apply: bool = False
 ) -> list[str]:
     """Build monitor config lines from Monitor objects.
 
-    When ``explicit_hdr_defaults`` is True, monitors with an HDR color-management
-    preset emit explicit ``sdrbrightness, 1`` / ``sdrsaturation, 1`` even when
-    those fields are ``None``. Hyprland's live ``hl.monitor()`` API is additive —
-    omitting these keys leaves the previous value in place rather than resetting
-    to 1.0 — so callers that apply the lines live (rather than write them to a
-    config file) should pass ``True`` to get reset-on-default semantics. Saved
-    config files normally leave it ``False`` to stay free of redundant defaults.
-    The luminance keys are intentionally excluded — see ``_HDR_FIELD_DEFAULTS``.
+    Hyprland's live ``hl.monitor()`` API is additive: it seeds the rule from
+    the existing one for that output, so an omitted key keeps its previous
+    value instead of falling back to the default. Callers that apply the
+    lines live (rather than write them to a config file) pass
+    ``for_live_apply=True`` to get reset-on-default semantics:
+
+    - ``transform, 0`` is emitted for unrotated monitors, so going back to
+      Normal actually un-rotates the display.
+    - Cleared ``bit_depth`` / ``color_management`` overrides emit their
+      Hyprland default instead of vanishing — see ``_LIVE_RESET_VALUES``.
+    - Monitors with an HDR color-management preset emit explicit
+      ``sdrbrightness, 1`` / ``sdrsaturation, 1`` even when those fields are
+      ``None``. The luminance keys are intentionally excluded — see
+      ``_HDR_FIELD_DEFAULTS``.
+
+    ``mirror_of`` is *not* reset here: Hyprland clears a mirror with an empty
+    value, which a comma-joined line can't carry unambiguously.
+
+    Saved config files leave it ``False`` to stay free of redundant defaults;
+    a config reload clears all rules first, so omission resets there anyway.
     """
     lines = []
     for mon in monitors:
@@ -376,13 +399,16 @@ def lines_from_monitors(
         pos = mon.position or f"{mon.x}x{mon.y}"
         scale_str = _format_scale(mon.scale)
         parts = [ident, res, pos, scale_str]
-        if mon.transform:
+        if mon.transform or for_live_apply:
             parts.extend(["transform", str(mon.transform)])
         is_hdr = mon.color_management in _HDR_CM_VALUES
         for config_key, field in _CONFIG_TO_FIELD.items():
             val = getattr(mon, field)
-            if val is None and explicit_hdr_defaults and is_hdr and field in _HDR_FIELD_DEFAULTS:
-                val = _format_float_value(_HDR_FIELD_DEFAULTS[field])
+            if val is None and for_live_apply:
+                if is_hdr and field in _HDR_FIELD_DEFAULTS:
+                    val = _format_float_value(_HDR_FIELD_DEFAULTS[field])
+                else:
+                    val = _LIVE_RESET_VALUES.get(field)
             if val is not None:
                 parts.extend([config_key, val])
         if mon.mirror_of is not None:

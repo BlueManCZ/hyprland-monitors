@@ -1,6 +1,6 @@
 [project]
 name = "hyprland-monitors"
-version = "0.8.0"
+version = "0.9.0"
 description = "Monitor management utilities for Hyprland"
 requires-python = ">=3.12"
 license = "MIT"

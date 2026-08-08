@@ -433,17 +433,17 @@ class TestLinesFromMonitors:
             "min_luminance, 0.01, max_luminance, 1000, max_avg_luminance, 400"
         )
 
-    def test_explicit_hdr_defaults_emits_ones_for_none_in_hdr(self):
+    def test_live_apply_emits_ones_for_none_in_hdr(self):
         # Hyprland's hl.monitor() keeps the previous SDR value when keys are
         # omitted; live-apply callers ask for explicit defaults so the apply
         # actually resets the live state to 1.0.
         mon = _make_monitor("DP-1", 3440, 1440, 0, 0, scale=1.0)
         mon.color_management = "hdr"
-        lines = lines_from_monitors([mon], explicit_hdr_defaults=True)
+        lines = lines_from_monitors([mon], for_live_apply=True)
         assert "sdrbrightness, 1" in lines[0]
         assert "sdrsaturation, 1" in lines[0]
 
-    def test_explicit_hdr_defaults_skips_luminance_fields(self):
+    def test_live_apply_skips_luminance_fields(self):
         # Luminance fields are intentionally NOT in _HDR_FIELD_DEFAULTS: Hyprland
         # substitutes per-panel EDID mastering luminance in HDR mode, so there is
         # no single "default" value we can safely emit as an explicit reset
@@ -451,34 +451,75 @@ class TestLinesFromMonitors:
         # would dim SDR content to ~13% of its target).
         mon = _make_monitor("DP-1", 3440, 1440, 0, 0, scale=1.0)
         mon.color_management = "hdr"
-        lines = lines_from_monitors([mon], explicit_hdr_defaults=True)
+        lines = lines_from_monitors([mon], for_live_apply=True)
         assert "sdr_min_luminance" not in lines[0]
         assert "sdr_max_luminance" not in lines[0]
         assert "min_luminance" not in lines[0]
         assert "max_luminance" not in lines[0]
         assert "max_avg_luminance" not in lines[0]
 
-    def test_explicit_hdr_defaults_keeps_user_overrides_in_hdr(self):
+    def test_live_apply_keeps_user_overrides_in_hdr(self):
         mon = _make_monitor("DP-1", 3440, 1440, 0, 0, scale=1.0)
         mon.color_management = "hdr"
         mon.sdr_brightness = "1.5"
         # sdr_saturation stays None — should still emit explicit "1"
-        lines = lines_from_monitors([mon], explicit_hdr_defaults=True)
+        lines = lines_from_monitors([mon], for_live_apply=True)
         assert "sdrbrightness, 1.5" in lines[0]
         assert "sdrsaturation, 1" in lines[0]
 
-    def test_explicit_hdr_defaults_no_effect_outside_hdr(self):
+    def test_live_apply_no_sdr_keys_outside_hdr(self):
         # cm=srgb (not HDR) — flag must not add SDR keys.
         mon = _make_monitor("DP-1", 3440, 1440, 0, 0, scale=1.0)
         mon.color_management = "srgb"
-        lines = lines_from_monitors([mon], explicit_hdr_defaults=True)
+        lines = lines_from_monitors([mon], for_live_apply=True)
         assert "sdrbrightness" not in lines[0]
         assert "sdrsaturation" not in lines[0]
 
-    def test_explicit_hdr_defaults_works_for_hdredid(self):
+    def test_live_apply_emits_transform_zero(self):
+        # An omitted transform leaves the monitor rotated, so picking "Normal"
+        # in a GUI would never take effect until the next config reload.
+        mon = _make_monitor("DP-1", 1920, 1080, 0, 0, scale=1.0)
+        lines = lines_from_monitors([mon], for_live_apply=True)
+        assert lines[0] == "DP-1, 1920x1080@60.00Hz, 0x0, 1, transform, 0, bitdepth, 8, cm, srgb"
+
+    def test_live_apply_keeps_nonzero_transform(self):
+        mon = _make_monitor("DP-1", 1920, 1080, 0, 0, scale=1.0, transform=3)
+        lines = lines_from_monitors([mon], for_live_apply=True)
+        assert "transform, 3" in lines[0]
+
+    def test_live_apply_resets_cleared_bit_depth_and_cm(self):
+        # Both fields are None (no override), so the live line has to carry
+        # Hyprland's own defaults or a cleared override survives the apply.
+        mon = _make_monitor("DP-1", 1920, 1080, 0, 0, scale=1.0)
+        lines = lines_from_monitors([mon], for_live_apply=True)
+        assert "bitdepth, 8" in lines[0]
+        assert "cm, srgb" in lines[0]
+
+    def test_live_apply_keeps_bit_depth_and_cm_overrides(self):
+        mon = _make_monitor("DP-1", 1920, 1080, 0, 0, scale=1.0)
+        mon.bit_depth = "10"
+        mon.color_management = "wide"
+        lines = lines_from_monitors([mon], for_live_apply=True)
+        assert "bitdepth, 10" in lines[0]
+        assert "cm, wide" in lines[0]
+
+    def test_live_apply_does_not_reset_vrr_or_mirror(self):
+        # vrr needs an explicit -1 that Hyprland doesn't accept yet; mirror
+        # clears with an empty value, which a comma-joined line can't carry.
+        mon = _make_monitor("DP-1", 1920, 1080, 0, 0, scale=1.0)
+        lines = lines_from_monitors([mon], for_live_apply=True)
+        assert "vrr" not in lines[0]
+        assert "mirror" not in lines[0]
+
+    def test_live_apply_omits_transform_when_disabled(self):
+        mon = _make_monitor("DP-1", 1920, 1080, 0, 0, scale=1.0)
+        mon.disabled = True
+        assert lines_from_monitors([mon], for_live_apply=True) == ["DP-1, disable"]
+
+    def test_live_apply_works_for_hdredid(self):
         mon = _make_monitor("DP-1", 3440, 1440, 0, 0, scale=1.0)
         mon.color_management = "hdredid"
-        lines = lines_from_monitors([mon], explicit_hdr_defaults=True)
+        lines = lines_from_monitors([mon], for_live_apply=True)
         assert "sdrbrightness, 1" in lines[0]
         assert "sdrsaturation, 1" in lines[0]
 
@@ -489,6 +530,7 @@ class TestLinesFromMonitors:
         lines = lines_from_monitors([mon])
         assert "sdrbrightness" not in lines[0]
         assert "sdrsaturation" not in lines[0]
+        assert "transform" not in lines[0]
 
     def test_no_extras_when_none(self):
         mon = _make_monitor("DP-1", 1920, 1080, 0, 0, scale=1.0)
