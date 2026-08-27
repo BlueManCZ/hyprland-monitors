@@ -381,9 +381,8 @@ def lines_from_monitors(
       ``sdrbrightness, 1`` / ``sdrsaturation, 1`` even when those fields are
       ``None``. The luminance keys are intentionally excluded — see
       ``_HDR_FIELD_DEFAULTS``.
-
-    ``mirror_of`` is *not* reset here: Hyprland clears a mirror with an empty
-    value, which a comma-joined line can't carry unambiguously.
+    - A cleared ``mirror_of`` emits ``mirror, `` so the live rule explicitly
+      drops its previous mirror target.
 
     Saved config files leave it ``False`` to stay free of redundant defaults;
     a config reload clears all rules first, so omission resets there anyway.
@@ -411,8 +410,8 @@ def lines_from_monitors(
                     val = _LIVE_RESET_VALUES.get(field)
             if val is not None:
                 parts.extend([config_key, val])
-        if mon.mirror_of is not None:
-            parts.extend(["mirror", mon.mirror_of])
+        if mon.mirror_of is not None or for_live_apply:
+            parts.extend(["mirror", mon.mirror_of or ""])
         lines.append(", ".join(parts))
     return lines
 
