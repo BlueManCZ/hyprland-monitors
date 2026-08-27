@@ -480,7 +480,9 @@ class TestLinesFromMonitors:
         # in a GUI would never take effect until the next config reload.
         mon = _make_monitor("DP-1", 1920, 1080, 0, 0, scale=1.0)
         lines = lines_from_monitors([mon], for_live_apply=True)
-        assert lines[0] == "DP-1, 1920x1080@60.00Hz, 0x0, 1, transform, 0, bitdepth, 8, cm, srgb"
+        assert lines[0] == (
+            "DP-1, 1920x1080@60.00Hz, 0x0, 1, transform, 0, bitdepth, 8, cm, srgb, mirror, "
+        )
 
     def test_live_apply_keeps_nonzero_transform(self):
         mon = _make_monitor("DP-1", 1920, 1080, 0, 0, scale=1.0, transform=3)
@@ -503,13 +505,18 @@ class TestLinesFromMonitors:
         assert "bitdepth, 10" in lines[0]
         assert "cm, wide" in lines[0]
 
-    def test_live_apply_does_not_reset_vrr_or_mirror(self):
-        # vrr needs an explicit -1 that Hyprland doesn't accept yet; mirror
-        # clears with an empty value, which a comma-joined line can't carry.
+    def test_live_apply_resets_mirror_but_not_vrr(self):
+        # Lua monitor rules are additive. An empty mirror value clears the
+        # previous target; vrr still has no accepted inherit-default sentinel.
         mon = _make_monitor("DP-1", 1920, 1080, 0, 0, scale=1.0)
         lines = lines_from_monitors([mon], for_live_apply=True)
         assert "vrr" not in lines[0]
-        assert "mirror" not in lines[0]
+        assert lines[0].endswith(", mirror, ")
+        assert parse_extras(lines[0]) == {
+            "bit_depth": "8",
+            "color_management": "srgb",
+            "mirror_of": "",
+        }
 
     def test_live_apply_omits_transform_when_disabled(self):
         mon = _make_monitor("DP-1", 1920, 1080, 0, 0, scale=1.0)
@@ -763,6 +770,12 @@ class TestMirror:
         mon.mirror_of = "DP-1"
         lines = lines_from_monitors([mon])
         assert lines == ["DP-2, 1920x1080@60.00Hz, 0x0, 1, mirror, DP-1"]
+
+    def test_live_apply_preserves_mirror_target(self):
+        mon = _make_monitor("DP-2", 1920, 1080, 0, 0)
+        mon.mirror_of = "DP-1"
+        lines = lines_from_monitors([mon], for_live_apply=True)
+        assert lines[0].endswith(", mirror, DP-1")
 
     def test_lines_no_mirror_when_none(self):
         mon = _make_monitor("DP-2", 1920, 1080, 0, 0)
