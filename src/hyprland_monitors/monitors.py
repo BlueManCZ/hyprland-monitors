@@ -434,7 +434,9 @@ def _parse_extras_from_parts(parts: list[str]) -> dict[str, str]:
     while i + 1 < len(tail):
         key = tail[i].lower()
         if key == "mirror":
-            extras["mirror_of"] = tail[i + 1]
+            # An empty target is the live-apply reset value, meaning "no mirror".
+            if tail[i + 1]:
+                extras["mirror_of"] = tail[i + 1]
         else:
             mapped = _CONFIG_TO_FIELD.get(key)
             if mapped:

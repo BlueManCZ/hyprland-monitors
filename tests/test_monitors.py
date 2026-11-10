@@ -512,11 +512,7 @@ class TestLinesFromMonitors:
         lines = lines_from_monitors([mon], for_live_apply=True)
         assert "vrr" not in lines[0]
         assert lines[0].endswith(", mirror, ")
-        assert parse_extras(lines[0]) == {
-            "bit_depth": "8",
-            "color_management": "srgb",
-            "mirror_of": "",
-        }
+        assert parse_extras(lines[0]) == {"bit_depth": "8", "color_management": "srgb"}
 
     def test_live_apply_omits_transform_when_disabled(self):
         mon = _make_monitor("DP-1", 1920, 1080, 0, 0, scale=1.0)
@@ -803,6 +799,13 @@ class TestMirror:
         saved = ["monitor = DP-2, 1920x1080@60, 0x0, 1, mirror, DP-1"]
         merge_saved_state(monitors, saved)
         assert monitors[0].mirror_of == "DP-1"
+
+    def test_merge_saved_state_empty_mirror_is_none(self):
+        # ``mirror, `` is the live-apply reset value; it must not leak in as "".
+        monitors = [_make_monitor("DP-2", 1920, 1080, 0, 0)]
+        saved = ["monitor = DP-2, 1920x1080@60, 0x0, 1, mirror, "]
+        merge_saved_state(monitors, saved)
+        assert monitors[0].mirror_of is None
 
     def test_all_monitors_connected_ignores_mirrored(self):
         a = _make_monitor("A", 1920, 1080, 0, 0)
