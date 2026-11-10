@@ -5,6 +5,12 @@ All notable changes to hyprland-monitors will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Clearing a mirror now works on live apply** — `lines_from_monitors(..., for_live_apply=True)` emits an explicit empty `mirror` value when `mirror_of` is cleared. Hyprland's additive Lua monitor rules otherwise retain the previous mirror target, so switching a display from Mirror back to Extend had no effect until a full config reload.
+
 ## [0.9.0] - 2026-08-08
 
 ### Fixed
