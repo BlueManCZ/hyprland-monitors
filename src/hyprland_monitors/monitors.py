@@ -353,12 +353,14 @@ def _identifier_for(mon: MonitorState) -> str:
 
     The description is truncated at the first comma so the line remains
     splittable on commas — Hyprland's prefix match still succeeds on the
-    truncated string.
+    truncated string. A ``#`` (some EDID serials start with one) is escaped
+    as ``##``, or Hyprlang would read the rest of the line as a comment;
+    :func:`resolve_identifier` undoes the escape.
     """
     if mon.identify_by_description and mon.description:
         prefix = mon.description.split(",", 1)[0].strip()
         if prefix:
-            return f"desc:{prefix}"
+            return f"desc:{prefix.replace('#', '##')}"
     return mon.name
 
 
@@ -460,11 +462,12 @@ def resolve_identifier(token: str, monitors: Sequence[MonitorState]) -> MonitorS
 
     The identifier is either a connector name (``DP-1``) or a description
     prefix (``desc:Some Monitor``). Description matching follows Hyprland's
-    rule: prefix match against the monitor's description string. The first
-    matching monitor wins.
+    rule: prefix match against the monitor's description string, after
+    turning Hyprlang's ``##`` escape back into ``#``. The first matching
+    monitor wins.
     """
     if token.startswith("desc:"):
-        prefix = token.removeprefix("desc:").strip()
+        prefix = token.removeprefix("desc:").strip().replace("##", "#")
         if not prefix:
             return None
         for mon in monitors:
