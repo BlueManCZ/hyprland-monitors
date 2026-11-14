@@ -5,12 +5,12 @@ All notable changes to hyprland-monitors will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.1] - 2026-11-14
 
 ### Fixed
 
 - **Clearing a mirror now works on live apply** — `lines_from_monitors(..., for_live_apply=True)` emits an explicit empty `mirror` value when `mirror_of` is cleared. Hyprland's additive Lua monitor rules otherwise retain the previous mirror target, so switching a display from Mirror back to Extend had no effect until a full config reload.
-- **Monitor settings dropped when the description contains `#`** — Hyprlang read everything after a `#` in a `desc:` identifier as a comment, so mode, position and scale were lost on save. The `#` is now escaped as `##`, keeping the full description. Lua configs also need BlueManCZ/hyprland-config#11. ([#3](https://github.com/BlueManCZ/hyprland-monitors/issues/3))
+- **Monitor settings dropped when the description contains `#`** — Hyprlang read everything after a `#` in a `desc:` identifier as a comment, so mode, position and scale were lost on save. The `#` is now escaped as `##`, keeping the full description. Lua configs also need hyprland-config 0.9.21 or later. ([#3](https://github.com/BlueManCZ/hyprland-monitors/issues/3))
 
 ## [0.9.0] - 2026-08-08
 
@@ -97,6 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Config parsing** — bidirectional conversion between MonitorState objects and Hyprland `monitor =` config lines, including extras (bitdepth, vrr, color_management)
 - **Hardware detection** — EDID parsing for HDR and 10-bit support, DRM kernel property queries for VRR capability
 
+[0.9.1]: https://github.com/BlueManCZ/hyprland-monitors/releases/tag/v0.9.1
 [0.9.0]: https://github.com/BlueManCZ/hyprland-monitors/releases/tag/v0.9.0
 [0.8.0]: https://github.com/BlueManCZ/hyprland-monitors/releases/tag/v0.8.0
 [0.7.0]: https://github.com/BlueManCZ/hyprland-monitors/releases/tag/v0.7.0
