@@ -895,6 +895,32 @@ class TestIdentifyByDescription:
         parts = [p.strip() for p in line.split(",")]
         assert parts[0] == "desc:Acme"
 
+    def test_escapes_hash_in_description(self):
+        # Hyprlang treats a bare " #..." as an inline comment, which would
+        # swallow mode, position and scale along with the serial.
+        mon = _make_described("DP-1", "Dell Inc. Dell AW3423DW #tBwzGDAYEA8I")
+        mon.identify_by_description = True
+        line = lines_from_monitors([mon])[0]
+        assert line.startswith("desc:Dell Inc. Dell AW3423DW ##tBwzGDAYEA8I, ")
+
+    def test_resolves_escaped_hash_exactly(self):
+        # The full serial survives, so two units of the same model stay apart.
+        a = _make_described("DP-1", "Dell Inc. Dell AW3423DW #AAAA")
+        b = _make_described("DP-2", "Dell Inc. Dell AW3423DW #BBBB")
+        b.identify_by_description = True
+        token = lines_from_monitors([b])[0].split(",")[0]
+        assert resolve_identifier(token, [a, b]) is b
+
+    def test_round_trip_with_hash_in_description(self):
+        mon = _make_described("DP-1", "Dell Inc. Dell AW3423DW #tBwzGDAYEA8I")
+        mon.identify_by_description = True
+        mon.bit_depth = "10"
+        saved = [f"monitor = {line}" for line in lines_from_monitors([mon])]
+        fresh = _make_described("DP-1", "Dell Inc. Dell AW3423DW #tBwzGDAYEA8I")
+        merge_saved_state([fresh], saved)
+        assert fresh.identify_by_description is True
+        assert fresh.bit_depth == "10"
+
     def test_round_trip_preserves_flag(self):
         mon = _make_described("DP-1", "Acme Pixel 5000")
         mon.identify_by_description = True

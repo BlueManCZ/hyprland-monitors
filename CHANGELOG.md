@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Clearing a mirror now works on live apply** — `lines_from_monitors(..., for_live_apply=True)` emits an explicit empty `mirror` value when `mirror_of` is cleared. Hyprland's additive Lua monitor rules otherwise retain the previous mirror target, so switching a display from Mirror back to Extend had no effect until a full config reload.
+- **Monitor settings dropped when the description contains `#`** — Hyprlang read everything after a `#` in a `desc:` identifier as a comment, so mode, position and scale were lost on save. The `#` is now escaped as `##`, keeping the full description. Lua configs also need BlueManCZ/hyprland-config#11. ([#3](https://github.com/BlueManCZ/hyprland-monitors/issues/3))
 
 ## [0.9.0] - 2026-08-08
 
