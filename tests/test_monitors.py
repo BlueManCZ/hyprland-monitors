@@ -999,10 +999,15 @@ def _ipc_monitor(
     sdr_saturation: float = 1.0,
     sdr_min_luminance: float = 0.2,
     sdr_max_luminance: float = 80.0,
+    name: str = "DP-1",
+    id: int = 0,
+    mirror_of: str = "none",
 ) -> Monitor:
     """Build a hyprland_socket.Monitor with sane defaults for from_ipc tests."""
     return Monitor(
-        name="DP-1",
+        name=name,
+        id=id,
+        mirror_of=mirror_of,
         make="",
         model="",
         width=1920,
@@ -1073,3 +1078,47 @@ class TestFromIpc:
     def test_real_cm_preset_preserved(self):
         mon = MonitorState.from_ipc(_ipc_monitor(color_management="hdr"))
         assert mon.color_management == "hdr"
+
+
+class TestMirrorFromIpc:
+    """Hyprland reports ``mirrorOf`` as the target's monitor ID, or "none"."""
+
+    def test_id_resolved_to_connector_name(self):
+        target = _ipc_monitor(name="DP-2", id=0)
+        mirror = _ipc_monitor(name="DP-3", id=1, mirror_of="0")
+        ipc = [target, mirror]
+        assert MonitorState.from_ipc(mirror, ipc).mirror_of == "DP-2"
+        assert MonitorState.from_ipc(target, ipc).mirror_of is None
+
+    def test_name_kept(self):
+        mirror = _ipc_monitor(name="DP-3", id=1, mirror_of="DP-2")
+        ipc = [_ipc_monitor(name="DP-2", id=0), mirror]
+        assert MonitorState.from_ipc(mirror, ipc).mirror_of == "DP-2"
+        assert MonitorState.from_ipc(mirror).mirror_of == "DP-2"
+
+    def test_missing_target_is_none(self):
+        mirror = _ipc_monitor(name="DP-3", id=1, mirror_of="5")
+        assert MonitorState.from_ipc(mirror, [mirror]).mirror_of is None
+
+    def test_id_without_monitor_list_is_none(self):
+        assert MonitorState.from_ipc(_ipc_monitor(mirror_of="0")).mirror_of is None
+
+    def test_none_sentinel(self):
+        mon = _ipc_monitor()
+        assert MonitorState.from_ipc(mon, [mon]).mirror_of is None
+
+    def test_update_geometry_resolves_id(self):
+        target = _ipc_monitor(name="DP-2", id=0)
+        mirror = _ipc_monitor(name="DP-3", id=1, mirror_of="0")
+        state = MonitorState.from_ipc(_ipc_monitor(name="DP-3", id=1))
+        state.update_geometry_from_ipc(mirror, [target, mirror])
+        assert state.mirror_of == "DP-2"
+        state.update_geometry_from_ipc(_ipc_monitor(name="DP-3", id=1), [target, mirror])
+        assert state.mirror_of is None
+
+    def test_resolved_name_reaches_config_line(self):
+        target = _ipc_monitor(name="DP-2", id=0)
+        mirror = _ipc_monitor(name="DP-3", id=1, mirror_of="0")
+        states = [MonitorState.from_ipc(m, [target, mirror]) for m in (target, mirror)]
+        assert lines_from_monitors(states)[1].endswith(", mirror, DP-2")
+        assert validate_mirror(states, states[1], states[1].mirror_of) is None

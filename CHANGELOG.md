@@ -5,6 +5,12 @@ All notable changes to hyprland-monitors will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] - 2026-11-16
+
+### Fixed
+
+- **Mirror target read from IPC was a monitor ID, not a connector name** — Hyprland reports `mirrorOf` as the target's numeric ID (`"0"`), which `MonitorState.mirror_of` passed through unchanged, so `validate_mirror` rejected it and `lines_from_monitors` wrote `mirror, 0`. `MonitorState.from_ipc` and `update_geometry_from_ipc` now take the full IPC monitor list as an optional second argument and resolve the ID to a connector name. Callers must pass the list to keep the mirror state: without it, or when the target is no longer present, `mirror_of` is `None`. Verified against Hyprland 0.57.0. ([hyprmod#90](https://github.com/BlueManCZ/hyprmod/issues/90))
+
 ## [0.9.1] - 2026-11-14
 
 ### Fixed
@@ -97,6 +103,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Config parsing** — bidirectional conversion between MonitorState objects and Hyprland `monitor =` config lines, including extras (bitdepth, vrr, color_management)
 - **Hardware detection** — EDID parsing for HDR and 10-bit support, DRM kernel property queries for VRR capability
 
+[0.9.2]: https://github.com/BlueManCZ/hyprland-monitors/releases/tag/v0.9.2
 [0.9.1]: https://github.com/BlueManCZ/hyprland-monitors/releases/tag/v0.9.1
 [0.9.0]: https://github.com/BlueManCZ/hyprland-monitors/releases/tag/v0.9.0
 [0.8.0]: https://github.com/BlueManCZ/hyprland-monitors/releases/tag/v0.8.0
