@@ -5,6 +5,12 @@ All notable changes to hyprland-monitors will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Mirror target read from IPC was a monitor ID, not a connector name** — Hyprland reports `mirrorOf` as the target's numeric ID (`"0"`), which `MonitorState.mirror_of` passed through unchanged, so `validate_mirror` rejected it and `lines_from_monitors` wrote `mirror, 0`. `MonitorState.from_ipc` and `update_geometry_from_ipc` now take the full IPC monitor list as an optional second argument and resolve the ID to a connector name. Callers must pass the list to keep the mirror state: without it, or when the target is no longer present, `mirror_of` is `None`. Verified against Hyprland 0.57.0. ([hyprmod#90](https://github.com/BlueManCZ/hyprmod/issues/90))
+
 ## [0.9.1] - 2026-11-14
 
 ### Fixed

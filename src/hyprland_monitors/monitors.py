@@ -127,6 +127,18 @@ def _format_scale(value: float) -> str:
     return f"{value:.2f}".rstrip("0").rstrip(".")
 
 
+def _mirror_target(m: Monitor, monitors: Sequence[Monitor]) -> str | None:
+    """Resolve IPC ``mirrorOf`` (a monitor ID, or "none") to a connector name."""
+    target = m.mirror_of
+    if not target or target == "none":
+        return None
+    for other in monitors:
+        if str(other.id) == target:
+            return other.name
+    # An ID that matches no monitor can't be named; anything else already is a name.
+    return None if target.isdigit() else target
+
+
 @dataclass(slots=True)
 class MonitorState:
     """Mutable working copy of a hyprland_socket.Monitor."""
@@ -162,8 +174,12 @@ class MonitorState:
     identify_by_description: bool = False
 
     @classmethod
-    def from_ipc(cls, m: Monitor) -> Self:
-        """Create from a hyprland_socket.Monitor, discarding IPC vrr (unreliable)."""
+    def from_ipc(cls, m: Monitor, monitors: Sequence[Monitor] = ()) -> Self:
+        """Create from a hyprland_socket.Monitor, discarding IPC vrr (unreliable).
+
+        *monitors* is the full IPC list; without it a mirror target, which IPC
+        reports as a monitor ID, can't be resolved and ``mirror_of`` is None.
+        """
         return cls(
             name=m.name,
             make=m.make,
@@ -197,15 +213,18 @@ class MonitorState:
             # (EDID-derived in HDR mode), which we can't distinguish from a user
             # override. min/max/max_avg_luminance aren't exposed by IPC at all.
             # All five are populated only from saved config via merge_saved_state.
-            mirror_of=m.mirror_of if m.mirror_of != "none" else None,
+            mirror_of=_mirror_target(m, monitors),
             mode=None,  # keyword overrides, restored from saved config by merge_saved_state
             position=None,
             disabled=m.disabled,
             description=m.description,
         )
 
-    def update_geometry_from_ipc(self, m: Monitor) -> None:
-        """Update geometry fields from IPC, preserving config-line extras (bit_depth, vrr, etc.)."""
+    def update_geometry_from_ipc(self, m: Monitor, monitors: Sequence[Monitor] = ()) -> None:
+        """Update geometry fields from IPC, preserving config-line extras (bit_depth, vrr, etc.).
+
+        *monitors* resolves the mirror target, as in :meth:`from_ipc`.
+        """
         self.x = m.x
         self.y = m.y
         self.width = m.width
@@ -213,7 +232,7 @@ class MonitorState:
         self.refresh_rate = m.refresh_rate
         self.scale = m.scale
         self.transform = m.transform
-        self.mirror_of = m.mirror_of if m.mirror_of != "none" else None
+        self.mirror_of = _mirror_target(m, monitors)
 
     @property
     def effective_size(self) -> tuple[int, int]:
